@@ -1,0 +1,49 @@
+{
+  "name": "structural-refactor",
+  "version": "0.1.0",
+  "description": "CLI for IntelliJ-style structural refactoring of JavaScript/TypeScript codebases",
+  "type": "module",
+  "packageManager": "pnpm@10.11.0",
+  "bin": {
+    "sref": "./dist/bin/sref.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "tsx bin/sref.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@msgpack/msgpack": "^3.0.0",
+    "chalk": "^5.4.1",
+    "commander": "^14.0.0",
+    "cosmiconfig": "^9.0.0",
+    "diff": "^7.0.0",
+    "fast-glob": "^3.3.3",
+    "oxc-parser": "^0.121.0",
+    "oxc-resolver": "^11.19.1",
+    "ts-morph": "^25.0.0",
+    "xxhash-wasm": "^1.1.0"
+  },
+  "devDependencies": {
+    "@types/diff": "^7.0.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}
