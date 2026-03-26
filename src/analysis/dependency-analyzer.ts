@@ -212,20 +212,47 @@ function resolveModulePath(
   return '';
 }
 
+/** Extension mapping: .js imports may resolve to .ts files (ESM convention) */
+const EXTENSION_MAP: Record<string, string[]> = {
+  '.js': ['.ts', '.tsx', '.js', '.jsx'],
+  '.mjs': ['.mts', '.mjs'],
+  '.cjs': ['.cts', '.cjs'],
+  '.jsx': ['.tsx', '.jsx'],
+};
+
 function tryResolveFile(basePath: string): string | undefined {
   // Direct match
   if (fs.existsSync(basePath) && fs.statSync(basePath).isFile()) return basePath;
 
-  // Try extensions
-  for (const ext of EXTENSIONS) {
-    const withExt = basePath + ext;
+  // If the path has an extension, try swapping it (e.g., .js → .ts)
+  const ext = path.extname(basePath);
+  if (ext && EXTENSION_MAP[ext]) {
+    const withoutExt = basePath.slice(0, -ext.length);
+    for (const tryExt of EXTENSION_MAP[ext]) {
+      const candidate = withoutExt + tryExt;
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+    }
+  }
+
+  // Try appending extensions (for extensionless imports)
+  for (const tryExt of EXTENSIONS) {
+    const withExt = basePath + tryExt;
     if (fs.existsSync(withExt)) return withExt;
   }
 
   // Try index files
-  for (const ext of EXTENSIONS) {
-    const indexPath = path.join(basePath, `index${ext}`);
+  for (const tryExt of EXTENSIONS) {
+    const indexPath = path.join(basePath, `index${tryExt}`);
     if (fs.existsSync(indexPath)) return indexPath;
+  }
+
+  // Try stripping extension and resolving as directory with index
+  if (ext) {
+    const withoutExt = basePath.slice(0, -ext.length);
+    for (const tryExt of EXTENSIONS) {
+      const indexPath = path.join(withoutExt, `index${tryExt}`);
+      if (fs.existsSync(indexPath)) return indexPath;
+    }
   }
 
   return undefined;
