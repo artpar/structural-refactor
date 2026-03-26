@@ -1,8 +1,12 @@
 import type { Command } from 'commander';
 import path from 'node:path';
 import { createExecutionContext } from '../execute.js';
+import { Project } from 'ts-morph';
 import { detectProject } from '../../analysis/project-detector.js';
 import { analyzeDependencies } from '../../analysis/dependency-analyzer.js';
+import { buildCFG } from '../../analysis/cfg.js';
+import { buildDFG } from '../../analysis/dfg.js';
+import { buildCallGraph } from '../../analysis/call-graph.js';
 
 export function registerAnalyze(program: Command): void {
   const analyze = program
@@ -266,6 +270,147 @@ export function registerAnalyze(program: Command): void {
         if (allImports.length > 0) {
           const summary = allImports.map((i) => i.source).join(', ');
           process.stdout.write(`${rel}: ${summary}\n`);
+        }
+      }
+    });
+
+  analyze
+    .command('cfg')
+    .description('Build control flow graph for a function')
+    .requiredOption('--file <path>', 'Source file')
+    .requiredOption('--function <name>', 'Function name')
+    .action((opts, cmd) => {
+      const globalOpts = cmd.optsWithGlobals();
+      const ctx = createExecutionContext(globalOpts);
+
+      const project = new Project({ tsConfigFilePath: path.resolve(ctx.tsconfig) });
+      const cfg = buildCFG(project, path.resolve(opts.file), opts.function, ctx.logger);
+
+      if (!cfg) {
+        ctx.logger.error('analyze', 'could not build CFG', { file: opts.file, function: opts.function });
+        process.exitCode = 1;
+        return;
+      }
+
+      if (globalOpts.json) {
+        process.stdout.write(JSON.stringify(cfg, null, 2) + '\n');
+      } else {
+        process.stdout.write(`CFG for ${cfg.functionName}: ${cfg.blocks.length} blocks\n`);
+        for (const block of cfg.blocks) {
+          const succs = block.successors.join(', ') || 'none';
+          process.stdout.write(`  [${block.id}] ${block.type}:${block.label} → [${succs}]`);
+          if (block.calls.length > 0) {
+            process.stdout.write(` calls: ${block.calls.map((c) => c.target).join(', ')}`);
+          }
+          process.stdout.write('\n');
+        }
+      }
+    });
+
+  analyze
+    .command('dfg')
+    .description('Build data flow graph for a function')
+    .requiredOption('--file <path>', 'Source file')
+    .requiredOption('--function <name>', 'Function name')
+    .action((opts, cmd) => {
+      const globalOpts = cmd.optsWithGlobals();
+      const ctx = createExecutionContext(globalOpts);
+
+      const project = new Project({ tsConfigFilePath: path.resolve(ctx.tsconfig) });
+      const dfg = buildDFG(project, path.resolve(opts.file), opts.function, ctx.logger);
+
+      if (!dfg) {
+        ctx.logger.error('analyze', 'could not build DFG', { file: opts.file, function: opts.function });
+        process.exitCode = 1;
+        return;
+      }
+
+      if (globalOpts.json) {
+        process.stdout.write(JSON.stringify(dfg, null, 2) + '\n');
+      } else {
+        process.stdout.write(`DFG for ${dfg.functionName}: ${dfg.nodes.length} nodes, ${dfg.edges.length} edges\n`);
+        for (const node of dfg.nodes) {
+          process.stdout.write(`  [${node.id}] ${node.type}:${node.name}`);
+          if (node.expression) process.stdout.write(` = ${node.expression}`);
+          if (node.sourceFile) process.stdout.write(` (from ${path.basename(node.sourceFile)})`);
+          process.stdout.write('\n');
+        }
+        process.stdout.write('\nEdges:\n');
+        for (const edge of dfg.edges) {
+          process.stdout.write(`  [${edge.from}] → [${edge.to}] (${edge.type})\n`);
+        }
+      }
+    });
+
+  analyze
+    .command('call-graph')
+    .description('Build cross-file call graph')
+    .option('--dir <path>', 'Project root directory', '.')
+    .option('--function <name>', 'Show callers/callees for specific function')
+    .action((opts, cmd) => {
+      const globalOpts = cmd.optsWithGlobals();
+      const ctx = createExecutionContext(globalOpts);
+      const rootDir = path.resolve(opts.dir);
+
+      const graph = buildCallGraph(rootDir, ctx.logger);
+
+      if (opts.function) {
+        const matching = [...graph.nodes.values()].filter((n) => n.name === opts.function);
+        if (matching.length === 0) {
+          ctx.logger.error('analyze', 'function not found in call graph', { function: opts.function });
+          process.exitCode = 1;
+          return;
+        }
+
+        for (const node of matching) {
+          const result = {
+            name: node.name,
+            file: path.relative(rootDir, node.filePath),
+            type: node.type,
+            exported: node.exported,
+            calls: node.calls.map((c) => ({ name: c.name, file: path.relative(rootDir, c.filePath) })),
+            calledBy: node.calledBy.map((c) => ({ name: c.name, file: path.relative(rootDir, c.filePath) })),
+          };
+
+          if (globalOpts.json) {
+            process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+          } else {
+            process.stdout.write(`${result.name} (${result.file}) [${result.type}${result.exported ? ', exported' : ''}]\n`);
+            process.stdout.write(`  Calls: ${result.calls.map((c) => `${c.name} (${c.file})`).join(', ') || 'none'}\n`);
+            process.stdout.write(`  Called by: ${result.calledBy.map((c) => `${c.name} (${c.file})`).join(', ') || 'none'}\n`);
+          }
+        }
+        return;
+      }
+
+      if (globalOpts.json) {
+        const result = {
+          stats: graph.stats,
+          testFiles: graph.testFiles.map((f) => path.relative(rootDir, f)),
+          sourceFiles: graph.sourceFiles.map((f) => path.relative(rootDir, f)),
+          functions: [...graph.nodes.values()].map((n) => ({
+            name: n.name,
+            file: path.relative(rootDir, n.filePath),
+            type: n.type,
+            exported: n.exported,
+            callCount: n.calls.length,
+            calledByCount: n.calledBy.length,
+          })),
+        };
+        process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+      } else {
+        process.stdout.write(`Functions: ${graph.stats.functionCount}\n`);
+        process.stdout.write(`Call edges: ${graph.stats.callEdgeCount}\n`);
+        process.stdout.write(`Exported: ${graph.stats.exportedFunctionCount}\n`);
+        process.stdout.write(`Source files: ${graph.stats.sourceFileCount}\n`);
+        process.stdout.write(`Test files: ${graph.stats.testFileCount}\n`);
+
+        process.stdout.write('\nFunctions:\n');
+        for (const [, node] of graph.nodes) {
+          const rel = path.relative(rootDir, node.filePath);
+          const callsStr = node.calls.length > 0 ? ` → ${node.calls.map((c) => c.name).join(', ')}` : '';
+          const byStr = node.calledBy.length > 0 ? ` ← ${node.calledBy.map((c) => c.name).join(', ')}` : '';
+          process.stdout.write(`  ${node.name} (${rel})${callsStr}${byStr}\n`);
         }
       }
     });

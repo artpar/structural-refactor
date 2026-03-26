@@ -17,5 +17,8 @@ describe('CLI analyze commands', () => {
     expect(subs).toContain('graph');
     expect(subs).toContain('exports');
     expect(subs).toContain('imports');
+    expect(subs).toContain('cfg');
+    expect(subs).toContain('dfg');
+    expect(subs).toContain('call-graph');
   });
 });
