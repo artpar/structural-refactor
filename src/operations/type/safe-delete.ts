@@ -56,7 +56,7 @@ export function safeDelete(project: Project, args: SafeDeleteArgs): ChangeSet {
 
   const original = sourceFile.getFullText();
 
-  // Remove the declaration via ts-morph
+  // Remove the declaration via ts-morph — dispatch by concrete type
   if (Node.isVariableDeclaration(decl)) {
     const stmt = decl.getVariableStatement();
     if (stmt && stmt.getDeclarations().length === 1) {
@@ -64,8 +64,16 @@ export function safeDelete(project: Project, args: SafeDeleteArgs): ChangeSet {
     } else {
       decl.remove();
     }
-  } else {
-    (decl as Node).asKindOrThrow(decl.getKind()).remove();
+  } else if (Node.isFunctionDeclaration(decl)) {
+    decl.remove();
+  } else if (Node.isClassDeclaration(decl)) {
+    decl.remove();
+  } else if (Node.isInterfaceDeclaration(decl)) {
+    decl.remove();
+  } else if (Node.isTypeAliasDeclaration(decl)) {
+    decl.remove();
+  } else if (Node.isEnumDeclaration(decl)) {
+    decl.remove();
   }
 
   const modified = sourceFile.getFullText();

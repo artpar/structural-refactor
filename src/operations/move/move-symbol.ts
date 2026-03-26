@@ -53,8 +53,13 @@ export function moveSymbol(project: Project, args: MoveSymbolArgs): ChangeSet {
   // Add the declaration to the target file
   targetSf.addStatements(declText);
 
-  // Remove from source
-  exportedDecl.remove();
+  // Remove from source — call remove on the concrete declaration type
+  if (Node.isFunctionDeclaration(exportedDecl)) exportedDecl.remove();
+  else if (Node.isClassDeclaration(exportedDecl)) exportedDecl.remove();
+  else if (Node.isInterfaceDeclaration(exportedDecl)) exportedDecl.remove();
+  else if (Node.isTypeAliasDeclaration(exportedDecl)) exportedDecl.remove();
+  else if (Node.isEnumDeclaration(exportedDecl)) exportedDecl.remove();
+  else if (Node.isVariableStatement(exportedDecl)) exportedDecl.remove();
 
   // Update imports in all files that imported this symbol from the source
   const oldSpecifierFromSource = (importerPath: string) => relativeSpecifier(importerPath, fromFile);

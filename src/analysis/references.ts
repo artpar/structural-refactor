@@ -74,10 +74,10 @@ export function findAllReferences(
       const refFile = refNode.getSourceFile().getFilePath();
       const line = refNode.getStartLineNumber();
       const col = refNode.getStart() - refNode.getStartLinePos() + 1;
-      const isDefinition = ref.isDefinition();
+      const isDefinition = ref.isDefinition() ?? false;
 
       const context = classifyReference(refNode, isDefinition);
-      const isWrite = isWriteReference(refNode, context);
+      const isWrite = isWriteReference(context);
 
       results.push({
         filePath: refFile,
@@ -171,7 +171,7 @@ function classifyReference(node: Node, isDefinition: boolean): ReferenceContext 
   return 'usage';
 }
 
-function isWriteReference(node: Node, context: ReferenceContext): boolean {
+function isWriteReference(context: ReferenceContext): boolean {
   return context === 'definition' || context === 'assignment';
 }
 

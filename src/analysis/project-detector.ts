@@ -43,7 +43,7 @@ export function detectProject(rootDir: string, logger: Logger): ProjectInfo {
   const pkgJson = readJsonSafe(pkgJsonPath);
 
   if (pkgJson) {
-    info.packageName = pkgJson.name;
+    info.packageName = pkgJson.name as string | undefined;
     info.dependencies = extractDependencies(pkgJson);
 
     // Detect monorepo
@@ -93,8 +93,9 @@ export function detectProject(rootDir: string, logger: Logger): ProjectInfo {
   if (tsconfig) {
     info.hasTypeScript = true;
 
-    if (tsconfig.compilerOptions?.paths) {
-      info.pathAliases = tsconfig.compilerOptions.paths;
+    const compilerOpts = tsconfig.compilerOptions as Record<string, unknown> | undefined;
+    if (compilerOpts?.paths) {
+      info.pathAliases = compilerOpts.paths as Record<string, string[]>;
     }
   }
 
@@ -147,7 +148,7 @@ function discoverWorkspacePackages(rootDir: string, workspaces: unknown): Worksp
 
       if (pkgJson) {
         packages.push({
-          name: pkgJson.name ?? entry.name,
+          name: (pkgJson.name as string) ?? entry.name,
           path: pkgDir,
           dependencies: Object.keys((pkgJson.dependencies as Record<string, string>) ?? {}),
         });

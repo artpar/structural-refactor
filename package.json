@@ -14,15 +14,36 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "CLAUDE.md"
   ],
   "scripts": {
+    "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "tsx bin/sref.ts"
+    "dev": "tsx bin/sref.ts",
+    "prepublishOnly": "pnpm build"
   },
   "engines": {
     "node": ">=22"
+  },
+  "keywords": [
+    "refactor",
+    "refactoring",
+    "codemod",
+    "typescript",
+    "javascript",
+    "ast",
+    "cli",
+    "rename",
+    "extract",
+    "inline",
+    "move"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/artpar/structural-refactor"
   },
   "dependencies": {
     "@msgpack/msgpack": "^3.0.0",
