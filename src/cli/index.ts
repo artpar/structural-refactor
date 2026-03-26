@@ -9,6 +9,7 @@ import { registerType } from './commands/type.js';
 import { registerModule } from './commands/module.js';
 import { registerQuality } from './commands/quality.js';
 import { registerClass } from './commands/class.js';
+import { registerAnalyze } from './commands/analyze.js';
 
 export function createProgram(): Command {
   const program = new Command();
@@ -34,6 +35,7 @@ export function createProgram(): Command {
   registerModule(program);
   registerQuality(program);
   registerClass(program);
+  registerAnalyze(program);
 
   return program;
 }

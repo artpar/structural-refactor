@@ -20,7 +20,8 @@ describe('CLI program', () => {
     expect(commands).toContain('module');
     expect(commands).toContain('quality');
     expect(commands).toContain('class');
-    expect(commands).toHaveLength(10);
+    expect(commands).toContain('analyze');
+    expect(commands).toHaveLength(11);
   });
 
   it('has global options', () => {

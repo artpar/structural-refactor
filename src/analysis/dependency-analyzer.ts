@@ -1,0 +1,232 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { parseSync } from 'oxc-parser';
+import type { Logger } from '../core/logger.js';
+import { discoverFiles } from '../indexing/file-index.js';
+import { detectProject } from './project-detector.js';
+
+export interface ImportEdge {
+  source: string;        // module specifier as written
+  resolved: string;      // absolute path (empty if external)
+  specifiers: string[];
+  isExternal: boolean;
+}
+
+export interface ModuleNode {
+  filePath: string;
+  exports: string[];
+  internalImports: ImportEdge[];
+  externalImports: ImportEdge[];
+  importedBy: string[];  // files that import this module
+}
+
+export interface GraphStats {
+  moduleCount: number;
+  externalDependencyCount: number;
+  internalEdgeCount: number;
+}
+
+export interface DependencyGraph {
+  modules: Map<string, ModuleNode>;
+  /** Files with no importers (likely entry points) */
+  entryPoints: string[];
+  /** Files with no imports (leaf modules) */
+  leaves: string[];
+  stats: GraphStats;
+}
+
+export function analyzeDependencies(rootDir: string, logger: Logger): DependencyGraph {
+  logger.info('dependency-analyzer', 'starting analysis', { rootDir });
+
+  const startMs = performance.now();
+
+  // Detect project for path alias resolution
+  const projectInfo = detectProject(rootDir, logger);
+  const pathAliases = projectInfo.pathAliases ?? {};
+
+  // Discover files
+  const files = discoverFiles(rootDir, logger);
+  const modules = new Map<string, ModuleNode>();
+
+  // Parse each file with oxc and extract import/export info
+  for (const filePath of files) {
+    const sourceText = fs.readFileSync(filePath, 'utf-8');
+    const node = parseFileImportsExports(filePath, sourceText, rootDir, pathAliases, logger);
+    modules.set(filePath, node);
+  }
+
+  // Build reverse edges (importedBy)
+  for (const [filePath, mod] of modules) {
+    for (const imp of mod.internalImports) {
+      const target = modules.get(imp.resolved);
+      if (target && !target.importedBy.includes(filePath)) {
+        target.importedBy.push(filePath);
+      }
+    }
+  }
+
+  // Compute entry points and leaves
+  const entryPoints: string[] = [];
+  const leaves: string[] = [];
+
+  for (const [filePath, mod] of modules) {
+    if (mod.importedBy.length === 0) entryPoints.push(filePath);
+    if (mod.internalImports.length === 0) leaves.push(filePath);
+  }
+
+  // Compute stats
+  const externalDeps = new Set<string>();
+  let internalEdgeCount = 0;
+  for (const mod of modules.values()) {
+    internalEdgeCount += mod.internalImports.length;
+    for (const ext of mod.externalImports) {
+      externalDeps.add(ext.source);
+    }
+  }
+
+  const stats: GraphStats = {
+    moduleCount: modules.size,
+    externalDependencyCount: externalDeps.size,
+    internalEdgeCount,
+  };
+
+  const durationMs = Math.round(performance.now() - startMs);
+  logger.info('dependency-analyzer', 'analysis complete', {
+    ...stats,
+    entryPointCount: entryPoints.length,
+    leafCount: leaves.length,
+    durationMs,
+  });
+
+  return { modules, entryPoints, leaves, stats };
+}
+
+function parseFileImportsExports(
+  filePath: string,
+  sourceText: string,
+  rootDir: string,
+  pathAliases: Record<string, string[]>,
+  logger: Logger,
+): ModuleNode {
+  let result;
+  try {
+    result = parseSync(filePath, sourceText);
+  } catch (e) {
+    logger.warn('dependency-analyzer', 'parse failed', { filePath, error: String(e) });
+    return {
+      filePath,
+      exports: [],
+      internalImports: [],
+      externalImports: [],
+      importedBy: [],
+    };
+  }
+
+  const mod = result.module;
+  const fileDir = path.dirname(filePath);
+
+  const internalImports: ImportEdge[] = [];
+  const externalImports: ImportEdge[] = [];
+  const exports: string[] = [];
+
+  // Extract imports
+  for (const staticImport of mod.staticImports) {
+    const source = staticImport.moduleRequest.value;
+    const specifiers: string[] = [];
+
+    for (const entry of staticImport.entries) {
+      if (entry.importName.kind === 'Default') specifiers.push('default');
+      else if (entry.importName.kind === 'NamespaceObject') specifiers.push('*');
+      else if (entry.importName.kind === 'Name') specifiers.push(entry.importName.name!);
+    }
+
+    const resolved = resolveModulePath(source, fileDir, rootDir, pathAliases);
+    const isExternal = resolved === '';
+
+    const edge: ImportEdge = { source, resolved, specifiers, isExternal };
+    if (isExternal) {
+      externalImports.push(edge);
+    } else {
+      internalImports.push(edge);
+    }
+  }
+
+  // Extract exports (including re-exports)
+  for (const staticExport of mod.staticExports) {
+    for (const entry of staticExport.entries) {
+      if (entry.exportName.kind === 'Default') {
+        exports.push('default');
+      } else if (entry.exportName.kind === 'Name' && entry.exportName.name) {
+        exports.push(entry.exportName.name);
+      }
+
+      // If it's a re-export, also add an import edge
+      if (entry.moduleRequest) {
+        const source = entry.moduleRequest.value;
+        const resolved = resolveModulePath(source, fileDir, rootDir, pathAliases);
+        const specifier = entry.importName.kind === 'Name' ? entry.importName.name! : '*';
+        const isExternal = resolved === '';
+
+        const edge: ImportEdge = { source, resolved, specifiers: [specifier], isExternal };
+        if (isExternal) {
+          externalImports.push(edge);
+        } else {
+          internalImports.push(edge);
+        }
+      }
+    }
+  }
+
+  return { filePath, exports, internalImports, externalImports, importedBy: [] };
+}
+
+const EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
+
+function resolveModulePath(
+  specifier: string,
+  fromDir: string,
+  rootDir: string,
+  pathAliases: Record<string, string[]>,
+): string {
+  // Try path alias resolution first
+  for (const [pattern, targets] of Object.entries(pathAliases)) {
+    const prefix = pattern.replace(/\*$/, '');
+    if (specifier.startsWith(prefix)) {
+      const remainder = specifier.slice(prefix.length);
+      for (const target of targets) {
+        const targetPrefix = target.replace(/\*$/, '');
+        const resolved = path.join(rootDir, targetPrefix, remainder);
+        const found = tryResolveFile(resolved);
+        if (found) return found;
+      }
+    }
+  }
+
+  // Relative import
+  if (specifier.startsWith('.')) {
+    const resolved = path.resolve(fromDir, specifier);
+    return tryResolveFile(resolved) ?? '';
+  }
+
+  // Bare specifier = external package
+  return '';
+}
+
+function tryResolveFile(basePath: string): string | undefined {
+  // Direct match
+  if (fs.existsSync(basePath) && fs.statSync(basePath).isFile()) return basePath;
+
+  // Try extensions
+  for (const ext of EXTENSIONS) {
+    const withExt = basePath + ext;
+    if (fs.existsSync(withExt)) return withExt;
+  }
+
+  // Try index files
+  for (const ext of EXTENSIONS) {
+    const indexPath = path.join(basePath, `index${ext}`);
+    if (fs.existsSync(indexPath)) return indexPath;
+  }
+
+  return undefined;
+}

@@ -1,0 +1,8 @@
+{
+  "name": "@myorg/web",
+  "version": "1.0.0",
+  "dependencies": {
+    "@myorg/core": "workspace:*",
+    "react": "^18.2.0"
+  }
+}

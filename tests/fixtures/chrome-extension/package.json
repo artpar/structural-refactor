@@ -1,0 +1,10 @@
+{
+  "name": "my-extension",
+  "dependencies": {
+    "webextension-polyfill": "^0.10.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@anthropic-ai/sdk": "^1.0.0"
+  }
+}
