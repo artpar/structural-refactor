@@ -13,6 +13,7 @@ export default defineConfig({
         'src/core/project-context.ts', // pure interfaces, no runtime code
         'src/scanner/types.ts',        // pure types, no runtime code
         'src/index.ts',                // barrel re-exports, no logic
+        'src/patterns/types.ts',       // pure types, no runtime code
       ],
       reporter: ['text'],
       thresholds: {
