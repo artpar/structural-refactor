@@ -50,15 +50,15 @@ export function registerRename(program: Command): void {
 
         if (matches.length > 1) {
           ctx.logger.error('rename', `multiple symbols named '${name}' found — use --path to disambiguate`, {
-            matches: matches.map((m) => `${path.relative(rootDir, m.filePath)}:${m.line} (${m.kind})`),
+            matches: matches.map((m) => `${path.relative(rootDir, m.filePath)} (${m.exported ? 'exported' : 'local'})`),
           });
           process.exitCode = 1;
           return;
         }
 
         filePath = matches[0].filePath;
-        line = matches[0].line;
-        col = 1; // Start of the declaration line — ts-morph will find the identifier
+        line = 1;  // ts-morph will search from line 1 for the identifier
+        col = 1;
       }
 
       const project = createProject(ctx);

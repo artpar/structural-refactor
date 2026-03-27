@@ -13,14 +13,23 @@ export interface ImportSummary {
   specifiers: string[];
 }
 
+export interface NameEntry {
+  name: string;
+  kind: 'function' | 'class' | 'interface' | 'type' | 'enum' | 'variable' | 'arrow' | 'unknown';
+}
+
 export interface FileSummary {
   path: string;
   mtimeMs: number;
   imports: ImportSummary[];
   exports: string[];
+  /** Names that are re-exported from other modules */
+  reExports: string[];
   topLevelNames: string[];
+  /** Name→kind mapping for lightweight kind filtering without deep analysis */
+  nameKinds: NameEntry[];
   hasDefaultExport: boolean;
-  isModule: boolean;  // has ESM import/export syntax
+  isModule: boolean;
 }
 
 /**
@@ -46,18 +55,17 @@ export function extractFileSummary(filePath: string, sourceText: string): FileSu
 
   // Exports — directly from oxc module metadata (no AST walk)
   const exports: string[] = [];
+  const reExports: string[] = [];
   let hasDefaultExport = false;
   for (const se of mod.staticExports) {
     for (const entry of se.entries) {
-      if (entry.exportName.kind === 'Default') {
-        exports.push('default');
-        hasDefaultExport = true;
-      } else if (entry.exportName.name) {
-        exports.push(entry.exportName.name);
-      }
+      const name = entry.exportName.kind === 'Default' ? 'default' : (entry.exportName.name ?? '');
+      if (name === 'default') hasDefaultExport = true;
+      if (name) exports.push(name);
 
       // Re-exports create import dependencies too
       if (entry.moduleRequest) {
+        if (name) reExports.push(name);
         const source = entry.moduleRequest.value;
         if (!imports.some((i) => i.source === source)) {
           const spec = entry.importName.kind === 'Name' ? entry.importName.name : '*';
@@ -67,8 +75,9 @@ export function extractFileSummary(filePath: string, sourceText: string): FileSu
     }
   }
 
-  // Top-level names — iterate ONLY program.body (NOT recursive)
-  const topLevelNames = extractTopLevelNames(result.program);
+  // Top-level names with kinds — iterate ONLY program.body (NOT recursive)
+  const nameKinds = extractTopLevelNamesWithKinds(result.program);
+  const topLevelNames = nameKinds.map((nk) => nk.name);
 
   // CJS: scan top-level for require() and module.exports (shallow only)
   extractCjsTopLevel(result.program, imports, exports, topLevelNames);
@@ -80,7 +89,9 @@ export function extractFileSummary(filePath: string, sourceText: string): FileSu
     mtimeMs: 0, // filled by caller
     imports,
     exports,
+    reExports,
     topLevelNames,
+    nameKinds,
     hasDefaultExport,
     isModule,
   };
@@ -90,49 +101,62 @@ export function extractFileSummary(filePath: string, sourceText: string): FileSu
  * Extract top-level declaration names. O(n) where n = top-level statements.
  * NOT recursive — does not enter function/class bodies.
  */
-function extractTopLevelNames(program: any): string[] {
-  const names: string[] = [];
-  if (!program.body) return names;
+function extractTopLevelNamesWithKinds(program: any): NameEntry[] {
+  const entries: NameEntry[] = [];
+  if (!program.body) return entries;
 
-  for (const stmt of program.body) {
-    switch (stmt.type) {
+  function addFromDecl(decl: any): void {
+    if (!decl) return;
+    switch (decl.type) {
       case 'FunctionDeclaration':
-        if (stmt.id?.name) names.push(stmt.id.name);
+        if (decl.id?.name) entries.push({ name: decl.id.name, kind: 'function' });
         break;
       case 'ClassDeclaration':
-        if (stmt.id?.name) names.push(stmt.id.name);
+        if (decl.id?.name) entries.push({ name: decl.id.name, kind: 'class' });
         break;
       case 'TSInterfaceDeclaration':
-        if (stmt.id?.name) names.push(stmt.id.name);
+        if (decl.id?.name) entries.push({ name: decl.id.name, kind: 'interface' });
         break;
       case 'TSTypeAliasDeclaration':
-        if (stmt.id?.name) names.push(stmt.id.name);
+        if (decl.id?.name) entries.push({ name: decl.id.name, kind: 'type' });
         break;
       case 'TSEnumDeclaration':
-        if (stmt.id?.name) names.push(stmt.id.name);
+        if (decl.id?.name) entries.push({ name: decl.id.name, kind: 'enum' });
         break;
       case 'VariableDeclaration':
-        for (const decl of stmt.declarations ?? []) {
-          if (decl.id?.name) names.push(decl.id.name);
-        }
-        break;
-      case 'ExportNamedDeclaration':
-        if (stmt.declaration) {
-          if (stmt.declaration.id?.name) names.push(stmt.declaration.id.name);
-          if (stmt.declaration.declarations) {
-            for (const decl of stmt.declaration.declarations) {
-              if (decl.id?.name) names.push(decl.id.name);
-            }
+        for (const d of decl.declarations ?? []) {
+          if (d.id?.name) {
+            const init = d.init;
+            const kind = (init?.type === 'ArrowFunctionExpression') ? 'arrow' as const
+              : (init?.type === 'FunctionExpression') ? 'function' as const
+              : 'variable' as const;
+            entries.push({ name: d.id.name, kind });
           }
         }
-        break;
-      case 'ExportDefaultDeclaration':
-        if (stmt.declaration?.id?.name) names.push(stmt.declaration.id.name);
         break;
     }
   }
 
-  return names;
+  for (const stmt of program.body) {
+    switch (stmt.type) {
+      case 'FunctionDeclaration':
+      case 'ClassDeclaration':
+      case 'TSInterfaceDeclaration':
+      case 'TSTypeAliasDeclaration':
+      case 'TSEnumDeclaration':
+      case 'VariableDeclaration':
+        addFromDecl(stmt);
+        break;
+      case 'ExportNamedDeclaration':
+        addFromDecl(stmt.declaration);
+        break;
+      case 'ExportDefaultDeclaration':
+        if (stmt.declaration?.id?.name) addFromDecl(stmt.declaration);
+        break;
+    }
+  }
+
+  return entries;
 }
 
 /**

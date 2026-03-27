@@ -104,8 +104,13 @@ export function analyzeDependenciesFast(rootDir: string, logger: Logger): Depend
   };
 }
 
-/** Original full analysis (kept for compatibility) */
+/** Main entry point — uses Level 1 fast index */
 export function analyzeDependencies(rootDir: string, logger: Logger): DependencyGraph {
+  return analyzeDependenciesFast(rootDir, logger);
+}
+
+/** Legacy full analysis — only used when Level 1 misses nested requires */
+function _analyzeDependenciesLegacy(rootDir: string, logger: Logger): DependencyGraph {
   logger.info('dependency-analyzer', 'starting analysis', { rootDir });
 
   const startMs = performance.now();

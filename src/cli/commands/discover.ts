@@ -29,22 +29,17 @@ export function registerDiscover(program: Command): void {
 
       if (globalOpts.json) {
         process.stdout.write(JSON.stringify(results.map((u) => ({
-          name: u.name, kind: u.kind,
-          file: path.relative(rootDir, u.filePath), line: u.line,
-          exported: u.exported, isAsync: u.isAsync,
-          params: u.params, returnType: u.returnType,
-          members: u.members, complexity: u.complexity,
+          name: u.name,
+          file: path.relative(rootDir, u.filePath),
+          exported: u.exported,
         })), null, 2) + '\n');
       } else {
         const stats = engine.stats();
         process.stdout.write(`${stats.totalUnits} code units in ${stats.fileCount} files\n\n`);
         for (const u of results) {
           const rel = path.relative(rootDir, u.filePath);
-          const sig = u.params.length > 0 ? `(${u.params.map((p) => `${p.name}: ${p.type}`).join(', ')})` : '';
-          const ret = u.returnType ? ` → ${u.returnType}` : '';
           const exp = u.exported ? ' [exported]' : '';
-          const async_ = u.isAsync ? ' async' : '';
-          process.stdout.write(`  ${u.kind}${async_} ${u.name}${sig}${ret}${exp}  ${rel}:${u.line}\n`);
+          process.stdout.write(`  ${u.name}${exp}  ${rel}\n`);
         }
       }
     });
@@ -63,8 +58,8 @@ export function registerDiscover(program: Command): void {
 
       if (globalOpts.json) {
         process.stdout.write(JSON.stringify(results.map((u) => ({
-          name: u.name, kind: u.kind,
-          file: path.relative(rootDir, u.filePath), line: u.line,
+          name: u.name,
+          file: path.relative(rootDir, u.filePath),
           exported: u.exported,
         })), null, 2) + '\n');
       } else {
@@ -73,7 +68,7 @@ export function registerDiscover(program: Command): void {
         } else {
           for (const u of results) {
             const rel = path.relative(rootDir, u.filePath);
-            process.stdout.write(`  ${u.kind} ${u.name}  ${rel}:${u.line}\n`);
+            process.stdout.write(`  ${u.name}  ${rel}\n`);
           }
         }
       }
@@ -132,36 +127,46 @@ export function registerDiscover(program: Command): void {
       const rootDir = path.resolve(opts.dir);
       const engine = createQueryEngine(rootDir, ctx.logger);
 
-      let results;
-
       if (opts.params || opts.returns || opts.paramCount) {
-        results = engine.searchBySignature({
+        const results = engine.searchBySignature({
           paramTypes: opts.params?.split(','),
           returnType: opts.returns,
           paramCount: opts.paramCount ? parseInt(opts.paramCount) : undefined,
         });
+
+        if (globalOpts.json) {
+          process.stdout.write(JSON.stringify(results.map((u) => ({
+            name: u.name, kind: u.kind,
+            file: path.relative(rootDir, u.filePath), line: u.line,
+            params: u.params, returnType: u.returnType,
+          })), null, 2) + '\n');
+        } else {
+          process.stdout.write(`${results.length} matches:\n`);
+          for (const u of results) {
+            const rel = path.relative(rootDir, u.filePath);
+            const sig = u.params.length > 0 ? `(${u.params.map((p) => p.type).join(', ')})` : '';
+            const ret = u.returnType ? ` → ${u.returnType}` : '';
+            process.stdout.write(`  ${u.kind} ${u.name}${sig}${ret}  ${rel}:${u.line}\n`);
+          }
+        }
       } else {
-        results = engine.searchByPattern({
+        const results = engine.searchByPattern({
           kind: opts.kind,
           hasMember: opts.hasMember,
           isAsync: opts.async ? true : undefined,
           namePattern: opts.name,
         });
-      }
 
-      if (globalOpts.json) {
-        process.stdout.write(JSON.stringify(results.map((u) => ({
-          name: u.name, kind: u.kind,
-          file: path.relative(rootDir, u.filePath), line: u.line,
-          params: u.params, returnType: u.returnType,
-        })), null, 2) + '\n');
-      } else {
-        process.stdout.write(`${results.length} matches:\n`);
-        for (const u of results) {
-          const rel = path.relative(rootDir, u.filePath);
-          const sig = u.params.length > 0 ? `(${u.params.map((p) => p.type).join(', ')})` : '';
-          const ret = u.returnType ? ` → ${u.returnType}` : '';
-          process.stdout.write(`  ${u.kind} ${u.name}${sig}${ret}  ${rel}:${u.line}\n`);
+        if (globalOpts.json) {
+          process.stdout.write(JSON.stringify(results.map((u) => ({
+            name: u.name, file: path.relative(rootDir, u.filePath), exported: u.exported,
+          })), null, 2) + '\n');
+        } else {
+          process.stdout.write(`${results.length} matches:\n`);
+          for (const u of results) {
+            const rel = path.relative(rootDir, u.filePath);
+            process.stdout.write(`  ${u.name}  ${rel}\n`);
+          }
         }
       }
     });

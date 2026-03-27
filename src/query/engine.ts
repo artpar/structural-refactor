@@ -1,14 +1,15 @@
 /**
- * Query engine: unified scan → fingerprint → indexed query.
- * Combines Merkle AST hashing (structural similarity),
- * inverted index (fast candidate retrieval), and lookup maps (O(1) queries).
+ * Query engine: Level 1 index for list/find, lazy Level 2 for similarity.
+ * Single path — all queries go through the persistent file summary index.
+ * Deep analysis (extractAll) only invoked on-demand for specific files.
  */
 import fs from 'node:fs';
 import type { Logger } from '../core/logger.js';
-import { discoverFiles } from '../indexing/file-index.js';
 import { extractAll } from '../scanner/extractors.js';
 import { diceSimilarity } from '../fingerprint/hasher.js';
-import type { CodeUnitRecord, CodeUnitKind, ScanResult } from '../scanner/types.js';
+import type { CodeUnitRecord, CodeUnitKind } from '../scanner/types.js';
+import { buildProjectIndex, type ProjectIndex } from '../scanner/index-store.js';
+import type { FileSummary } from '../scanner/file-summary.js';
 
 // ─── Public types ───────────────────────────────────────────────
 
@@ -24,9 +25,7 @@ export interface IndexedUnit {
   members: { name: string; kind: string }[];
   complexity: number;
   bodyLineCount: number;
-  /** Merkle subtree hashes for structural similarity */
   subtreeHashes: number[];
-  /** Token bag for SourcererCC-style retrieval: token → count */
   tokenBag: Map<string, number>;
 }
 
@@ -62,125 +61,130 @@ export interface IndexStats {
   exportedCount: number;
 }
 
+/** Lightweight unit from Level 1 index — no deep analysis needed */
+export interface LightUnit {
+  name: string;
+  kind: string;
+  filePath: string;
+  exported: boolean;
+}
+
 export interface QueryEngine {
-  find(name: string): IndexedUnit[];
-  list(filter?: ListFilter): IndexedUnit[];
+  find(name: string): LightUnit[];
+  list(filter?: ListFilter): LightUnit[];
   similar(name: string, minScore?: number): SimilarResult[];
   searchBySignature(query: SignatureQuery): IndexedUnit[];
-  searchByPattern(query: PatternQuery): IndexedUnit[];
+  searchByPattern(query: PatternQuery): LightUnit[];
   stats(): IndexStats;
 }
 
 // ─── Implementation ─────────────────────────────────────────────
 
 export function createQueryEngine(rootDir: string, logger: Logger): QueryEngine {
-  logger.info('query-engine', 'building index', { rootDir });
+  logger.info('query-engine', 'building from index', { rootDir });
   const startMs = performance.now();
 
-  const files = discoverFiles(rootDir, logger);
-  const allUnits: IndexedUnit[] = [];
+  // Level 1: lightweight index — fast
+  const index = buildProjectIndex(rootDir, logger);
 
-  // Lookup indexes
-  const byName = new Map<string, IndexedUnit[]>();
-  const byKind = new Map<string, IndexedUnit[]>();
-  const byParamSig = new Map<string, IndexedUnit[]>();
-  const byReturnType = new Map<string, IndexedUnit[]>();
-  const byParamCount = new Map<number, IndexedUnit[]>();
-  const byMember = new Map<string, IndexedUnit[]>();
+  // Build lightweight unit list from summaries
+  const allLightUnits: LightUnit[] = [];
+  const byName = new Map<string, LightUnit[]>();
+  const byFile = new Map<string, LightUnit[]>();
   const fileSet = new Set<string>();
 
-  for (const filePath of files) {
-    const sourceText = fs.readFileSync(filePath, 'utf-8');
-    let scanResult: ScanResult;
-    try {
-      scanResult = extractAll(filePath, sourceText, '');
-    } catch {
-      logger.warn('query-engine', 'scan failed, skipping', { filePath });
-      continue;
-    }
-
+  for (const [filePath, summary] of index.summaries) {
     fileSet.add(filePath);
-
-    // For each code unit, compute fingerprints and build indexed unit
-    for (const unit of scanResult.codeUnits) {
-      const indexed = buildIndexedUnit(unit, filePath);
-      allUnits.push(indexed);
-
-      // Populate lookup indexes
-      addToMap(byName, indexed.name, indexed);
-      addToMap(byKind, indexed.kind, indexed);
-
-      if (indexed.params.length > 0) {
-        const sigKey = indexed.params.map((p) => p.type).join(',');
-        addToMap(byParamSig, sigKey, indexed);
-        addToMapNum(byParamCount, indexed.params.length, indexed);
-      }
-
-      if (indexed.returnType) {
-        addToMap(byReturnType, indexed.returnType, indexed);
-      }
-
-      for (const member of indexed.members) {
-        addToMap(byMember, member.name, indexed);
-      }
+    // Use nameKinds for kind info, fall back to topLevelNames
+    const kindMap = new Map<string, string>();
+    if (summary.nameKinds) {
+      for (const nk of summary.nameKinds) kindMap.set(nk.name, nk.kind);
+    }
+    for (const name of summary.topLevelNames) {
+      const kind = kindMap.get(name) ?? 'unknown';
+      const unit: LightUnit = { name, kind, filePath, exported: summary.exports.includes(name) };
+      allLightUnits.push(unit);
+      addToMap(byName, name, unit);
+      addToMapArr(byFile, filePath, unit);
     }
   }
 
-  // Build inverted token index for fast similarity candidate retrieval
-  const tokenIndex = buildTokenIndex(allUnits);
+  // Deep analysis cache — lazy, per-file, computed on-demand
+  const deepCache = new Map<string, IndexedUnit[]>();
+
+  function getDeepUnits(filePath: string): IndexedUnit[] {
+    let cached = deepCache.get(filePath);
+    if (cached) return cached;
+
+    try {
+      const sourceText = fs.readFileSync(filePath, 'utf-8');
+      const scanResult = extractAll(filePath, sourceText, '');
+      cached = scanResult.codeUnits.map((unit) => buildIndexedUnit(unit, filePath));
+      deepCache.set(filePath, cached);
+      return cached;
+    } catch {
+      return [];
+    }
+  }
 
   const durationMs = Math.round(performance.now() - startMs);
-  logger.info('query-engine', 'index built', {
-    unitCount: allUnits.length, fileCount: fileSet.size, durationMs,
+  logger.info('query-engine', 'index ready', {
+    files: fileSet.size, names: allLightUnits.length, durationMs,
   });
 
   return {
-    find(name: string): IndexedUnit[] {
+    find(name: string): LightUnit[] {
       return byName.get(name) ?? [];
     },
 
-    list(filter?: ListFilter): IndexedUnit[] {
-      let results = allUnits;
-      if (filter?.kind) results = byKind.get(filter.kind) ?? [];
+    list(filter?: ListFilter): LightUnit[] {
+      let results = allLightUnits;
       if (filter?.exported !== undefined) results = results.filter((u) => u.exported === filter.exported);
       if (filter?.filePattern) results = results.filter((u) => u.filePath.includes(filter.filePattern!));
+      // Kind filter uses Level 1 nameKinds — no deep analysis needed
+      if (filter?.kind) results = results.filter((u) => u.kind === filter.kind);
       return results;
     },
 
     similar(name: string, minScore = 0.3): SimilarResult[] {
-      const targets = byName.get(name);
-      if (!targets || targets.length === 0) return [];
-      const target = targets[0];
+      const targetFiles = byName.get(name);
+      if (!targetFiles || targetFiles.length === 0) return [];
 
-      // Use inverted token index for candidate retrieval (SourcererCC approach)
-      const candidates = getCandidates(target, tokenIndex, allUnits);
+      // Level 2: deep-analyze ONLY the target file
+      const targetDeep = getDeepUnits(targetFiles[0].filePath);
+      const target = targetDeep.find((u) => u.name === name);
+      if (!target) return [];
 
+      // Find candidate files from index (files with similar exports)
+      // Deep-analyze only those candidates
       const results: SimilarResult[] = [];
-      for (const candidate of candidates) {
-        if (candidate === target) continue;
-        if (candidate.kind !== target.kind) continue;
+      const seen = new Set<string>();
 
-        // Dice similarity on Merkle subtree hashes (structural)
-        const structuralScore = diceSimilarity(target.subtreeHashes, candidate.subtreeHashes);
+      for (const [filePath] of index.summaries) {
+        const candidates = getDeepUnits(filePath);
+        for (const candidate of candidates) {
+          // Skip the target itself, not the whole file
+          if (candidate.name === target.name && filePath === targetFiles[0].filePath) continue;
+          if (candidate.kind !== target.kind) continue;
+          if (seen.has(`${filePath}:${candidate.name}`)) continue;
+          seen.add(`${filePath}:${candidate.name}`);
 
-        // Token overlap score
-        const tokenScore = tokenOverlap(target.tokenBag, candidate.tokenBag);
+          const structuralScore = diceSimilarity(target.subtreeHashes, candidate.subtreeHashes);
+          const tokenScore = tokenOverlap(target.tokenBag, candidate.tokenBag);
+          const score = 0.6 * structuralScore + 0.4 * tokenScore;
 
-        // Combined score (weighted)
-        const score = 0.6 * structuralScore + 0.4 * tokenScore;
+          if (score >= minScore) {
+            const reasons: string[] = [];
+            if (structuralScore > 0.8) reasons.push('identical structure');
+            else if (structuralScore > 0.5) reasons.push('similar structure');
+            const tSig = target.params.map((p) => p.type).join(',');
+            const cSig = candidate.params.map((p) => p.type).join(',');
+            if (tSig === cSig && tSig.length > 0) reasons.push('same param types');
+            if (target.returnType === candidate.returnType && target.returnType) reasons.push('same return type');
+            if (target.params.length === candidate.params.length) reasons.push('same param count');
 
-        if (score >= minScore) {
-          const reasons: string[] = [];
-          if (structuralScore > 0.8) reasons.push('identical structure');
-          else if (structuralScore > 0.5) reasons.push('similar structure');
-
-          const targetSig = target.params.map((p) => p.type).join(',');
-          const candSig = candidate.params.map((p) => p.type).join(',');
-          if (targetSig === candSig && targetSig.length > 0) reasons.push('same param types');
-          if (target.returnType === candidate.returnType && target.returnType) reasons.push('same return type');
-          if (target.params.length === candidate.params.length) reasons.push('same param count');
-
-          results.push({ unit: candidate, score, reasons });
+            results.push({ unit: candidate, score, reasons });
+          }
         }
       }
 
@@ -189,109 +193,83 @@ export function createQueryEngine(rootDir: string, logger: Logger): QueryEngine 
     },
 
     searchBySignature(query: SignatureQuery): IndexedUnit[] {
-      let candidates: IndexedUnit[] | undefined;
-
-      // Use indexes for fast lookup
-      if (query.paramTypes) {
-        const key = query.paramTypes.join(',');
-        candidates = byParamSig.get(key);
-      } else if (query.paramCount !== undefined) {
-        candidates = byParamCount.get(query.paramCount);
-      } else if (query.returnType) {
-        candidates = byReturnType.get(query.returnType);
+      // Needs deep analysis — scan all files lazily
+      const results: IndexedUnit[] = [];
+      for (const [filePath] of index.summaries) {
+        const units = getDeepUnits(filePath);
+        for (const u of units) {
+          if (query.paramTypes && u.params.map((p) => p.type).join(',') !== query.paramTypes.join(',')) continue;
+          if (query.paramCount !== undefined && u.params.length !== query.paramCount) continue;
+          if (query.returnType && u.returnType !== query.returnType) continue;
+          results.push(u);
+        }
       }
-
-      if (!candidates) candidates = allUnits;
-
-      return candidates.filter((u) => {
-        if (query.paramTypes && u.params.map((p) => p.type).join(',') !== query.paramTypes.join(',')) return false;
-        if (query.paramCount !== undefined && u.params.length !== query.paramCount) return false;
-        if (query.returnType && u.returnType !== query.returnType) return false;
-        return true;
-      });
+      return results;
     },
 
-    searchByPattern(query: PatternQuery): IndexedUnit[] {
-      let results = query.kind ? (byKind.get(query.kind) ?? []) : allUnits;
-      if (query.hasMember) {
-        const withMember = byMember.get(query.hasMember) ?? [];
-        results = query.kind ? results.filter((u) => withMember.includes(u)) : withMember;
-      }
-      if (query.isAsync !== undefined) results = results.filter((u) => u.isAsync === query.isAsync);
+    searchByPattern(query: PatternQuery): LightUnit[] {
+      let results = allLightUnits;
       if (query.namePattern) results = results.filter((u) => u.name.includes(query.namePattern!));
+      if (query.kind || query.hasMember || query.isAsync !== undefined) {
+        // Need deep analysis for these filters
+        const deepResults: LightUnit[] = [];
+        for (const unit of results) {
+          const deep = getDeepUnits(unit.filePath);
+          const match = deep.find((d) => {
+            if (d.name !== unit.name) return false;
+            if (query.kind && d.kind !== query.kind) return false;
+            if (query.isAsync !== undefined && d.isAsync !== query.isAsync) return false;
+            if (query.hasMember && !d.members.some((m) => m.name === query.hasMember)) return false;
+            return true;
+          });
+          if (match) deepResults.push(unit);
+        }
+        return deepResults;
+      }
       return results;
     },
 
     stats(): IndexStats {
       const kindCounts: Record<string, number> = {};
-      for (const u of allUnits) {
+      for (const u of allLightUnits) {
         kindCounts[u.kind] = (kindCounts[u.kind] ?? 0) + 1;
       }
       return {
-        totalUnits: allUnits.length,
+        totalUnits: allLightUnits.length,
         byKind: kindCounts,
         fileCount: fileSet.size,
-        exportedCount: allUnits.filter((u) => u.exported).length,
+        exportedCount: allLightUnits.filter((u) => u.exported).length,
       };
     },
   };
 }
 
-// ─── Internal helpers ───────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────
 
-function buildIndexedUnit(
-  unit: CodeUnitRecord,
-  filePath: string,
-): IndexedUnit {
-  // Compute structural hashes from nodeTypes already in CodeUnitRecord
-  // NO re-parsing — nodeTypes were extracted during the scan pass
+function buildIndexedUnit(unit: CodeUnitRecord, filePath: string): IndexedUnit {
   const hashes = hashFromNodeTypes(unit.nodeTypes);
-
-  // Build token bag from typeTokens (also already extracted)
   const tokenBag = new Map<string, number>();
   for (const token of unit.typeTokens) {
     tokenBag.set(token, (tokenBag.get(token) ?? 0) + 1);
   }
-
   return {
-    name: unit.name,
-    kind: unit.kind,
-    filePath,
-    line: unit.line,
-    exported: unit.exported,
-    isAsync: unit.isAsync,
-    params: unit.params,
-    returnType: unit.returnType,
+    name: unit.name, kind: unit.kind, filePath, line: unit.line,
+    exported: unit.exported, isAsync: unit.isAsync,
+    params: unit.params, returnType: unit.returnType,
     members: unit.members.map((m) => ({ name: m.name, kind: m.kind })),
-    complexity: unit.complexity,
-    bodyLineCount: unit.bodyLineCount,
-    subtreeHashes: hashes,
-    tokenBag,
+    complexity: unit.complexity, bodyLineCount: unit.bodyLineCount,
+    subtreeHashes: hashes, tokenBag,
   };
 }
 
-/**
- * Compute structural hashes from pre-extracted nodeTypes array.
- * NO re-parsing — uses the post-order node type sequence from the scan pass.
- * FNV-1a hash for speed.
- */
 function hashFromNodeTypes(nodeTypes: string[]): number[] {
   if (nodeTypes.length === 0) return [];
-
   const hashes: number[] = [];
-  // Each node type gets a hash, and we also create composite hashes
-  // for subsequences (simulating subtree hashes)
   for (let i = 0; i < nodeTypes.length; i++) {
     hashes.push(fnv1a(nodeTypes[i]));
-    // 2-gram and 3-gram hashes for structural similarity
-    if (i + 1 < nodeTypes.length) {
-      hashes.push(fnv1a(nodeTypes[i] + ':' + nodeTypes[i + 1]));
-    }
-    if (i + 2 < nodeTypes.length) {
-      hashes.push(fnv1a(nodeTypes[i] + ':' + nodeTypes[i + 1] + ':' + nodeTypes[i + 2]));
-    }
+    if (i + 1 < nodeTypes.length) hashes.push(fnv1a(nodeTypes[i] + ':' + nodeTypes[i + 1]));
+    if (i + 2 < nodeTypes.length) hashes.push(fnv1a(nodeTypes[i] + ':' + nodeTypes[i + 1] + ':' + nodeTypes[i + 2]));
   }
-
   return hashes;
 }
 
@@ -304,76 +282,23 @@ function fnv1a(str: string): number {
   return hash;
 }
 
-/** Inverted token index: token → list of unit indices */
-interface TokenIndex {
-  index: Map<string, number[]>;     // token → unit indices
-  globalFreq: Map<string, number>;  // token → total frequency across all units
-}
-
-function buildTokenIndex(units: IndexedUnit[]): TokenIndex {
-  const index = new Map<string, number[]>();
-  const globalFreq = new Map<string, number>();
-
-  for (let i = 0; i < units.length; i++) {
-    for (const [token, count] of units[i].tokenBag) {
-      const list = index.get(token);
-      if (list) list.push(i);
-      else index.set(token, [i]);
-      globalFreq.set(token, (globalFreq.get(token) ?? 0) + count);
-    }
-  }
-
-  return { index, globalFreq };
-}
-
-/** Get candidate units that share tokens with the target (SourcererCC-style) */
-function getCandidates(target: IndexedUnit, tokenIndex: TokenIndex, allUnits: IndexedUnit[]): IndexedUnit[] {
-  const candidateScores = new Map<number, number>();
-
-  // Sort tokens by rarity (global frequency ascending) — rare tokens first
-  const sortedTokens = [...target.tokenBag.entries()]
-    .sort((a, b) => (tokenIndex.globalFreq.get(a[0]) ?? 0) - (tokenIndex.globalFreq.get(b[0]) ?? 0));
-
-  for (const [token] of sortedTokens) {
-    const unitIndices = tokenIndex.index.get(token) ?? [];
-    for (const idx of unitIndices) {
-      candidateScores.set(idx, (candidateScores.get(idx) ?? 0) + 1);
-    }
-  }
-
-  // Return units with at least 1 shared token, sorted by overlap
-  return [...candidateScores.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([idx]) => allUnits[idx]);
-}
-
 function tokenOverlap(a: Map<string, number>, b: Map<string, number>): number {
   if (a.size === 0 && b.size === 0) return 1.0;
   if (a.size === 0 || b.size === 0) return 0.0;
-
-  let intersection = 0;
-  let totalA = 0;
-  let totalB = 0;
-
-  for (const [token, count] of a) {
-    totalA += count;
-    const bCount = b.get(token) ?? 0;
-    intersection += Math.min(count, bCount);
-  }
+  let intersection = 0, totalA = 0, totalB = 0;
+  for (const [token, count] of a) { totalA += count; intersection += Math.min(count, b.get(token) ?? 0); }
   for (const [, count] of b) totalB += count;
-
   return (2 * intersection) / (totalA + totalB);
 }
 
-function addToMap(map: Map<string, IndexedUnit[]>, key: string, unit: IndexedUnit): void {
+function addToMap(map: Map<string, LightUnit[]>, key: string, unit: LightUnit): void {
   const list = map.get(key);
   if (list) list.push(unit);
   else map.set(key, [unit]);
 }
 
-function addToMapNum(map: Map<number, IndexedUnit[]>, key: number, unit: IndexedUnit): void {
+function addToMapArr(map: Map<string, LightUnit[]>, key: string, unit: LightUnit): void {
   const list = map.get(key);
   if (list) list.push(unit);
   else map.set(key, [unit]);
 }
-

@@ -1,9 +1,15 @@
+/**
+ * Pattern assembler: combines all detectors into an ArchitectureReport.
+ * Uses Level 1 index for architectural/structural patterns (imports/exports only).
+ * Uses Level 2 deep analysis (extractAll) only for creational/behavioral/framework
+ * patterns that need code unit details (members, decorators, etc.).
+ */
 import fs from 'node:fs';
 import type { Logger } from '../core/logger.js';
 import type { ScanResult, CodeUnitRecord } from '../scanner/types.js';
-import { discoverFiles } from '../indexing/file-index.js';
 import { extractAll } from '../scanner/extractors.js';
 import { detectProject } from '../analysis/project-detector.js';
+import { buildProjectIndex } from '../scanner/index-store.js';
 import { detectCreationalPatterns } from './creational.js';
 import { detectBehavioralPatterns } from './behavioral.js';
 import { detectStructuralPatterns } from './structural.js';
@@ -15,24 +21,48 @@ export function analyzePatterns(rootDir: string, logger: Logger): ArchitectureRe
   logger.info('patterns', 'analyzing architecture patterns', { rootDir });
   const startMs = performance.now();
 
-  // Scan all files
   const projectInfo = detectProject(rootDir, logger);
-  const files = discoverFiles(rootDir, logger);
+
+  // Level 1: fast index for architectural patterns (imports/exports)
+  const index = buildProjectIndex(rootDir, logger);
+
+  // Build ScanResult-like structures from index for structural/architectural detectors
   const scanResults: ScanResult[] = [];
+  for (const [filePath, summary] of index.summaries) {
+    scanResults.push({
+      filePath,
+      contentHash: '',
+      imports: summary.imports.map((i) => ({
+        source: i.source,
+        specifiers: i.specifiers,
+        resolved: '',
+        isExternal: !i.source.startsWith('.'),
+      })),
+      exports: summary.exports.map((name) => ({
+        name,
+        isDefault: name === 'default',
+        isReExport: (summary.reExports ?? []).includes(name),
+      })),
+      codeUnits: [],
+      calls: [],
+    });
+  }
+
+  // Level 2: deep analysis for creational/behavioral/framework (needs code units)
   const allUnits: CodeUnitRecord[] = [];
   const filePaths = new Map<string, string>();
 
-  for (const filePath of files) {
-    const sourceText = fs.readFileSync(filePath, 'utf-8');
+  logger.info('patterns', 'deep-analyzing files for pattern detection', { fileCount: index.summaries.size });
+  for (const [filePath] of index.summaries) {
     try {
+      const sourceText = fs.readFileSync(filePath, 'utf-8');
       const result = extractAll(filePath, sourceText, '');
-      scanResults.push(result);
       for (const unit of result.codeUnits) {
         allUnits.push(unit);
         filePaths.set(unit.name, filePath);
       }
     } catch {
-      logger.warn('patterns', 'scan failed, skipping', { filePath });
+      // Parse failure — skip
     }
   }
 
@@ -45,22 +75,13 @@ export function analyzePatterns(rootDir: string, logger: Logger): ArchitectureRe
     ...detectFrameworkPatterns(allUnits, filePaths),
   ];
 
-  // Sort by confidence descending
   allPatterns.sort((a, b) => b.confidence - a.confidence);
 
-  // Group by category
   const byCategory: Record<PatternCategory, DetectedPattern[]> = {
-    creational: [],
-    structural: [],
-    behavioral: [],
-    architectural: [],
-    framework: [],
+    creational: [], structural: [], behavioral: [], architectural: [], framework: [],
   };
-  for (const p of allPatterns) {
-    byCategory[p.category].push(p);
-  }
+  for (const p of allPatterns) byCategory[p.category].push(p);
 
-  // Compute stats
   const byCategoryCount: Record<string, number> = {};
   for (const [cat, pats] of Object.entries(byCategory)) {
     if (pats.length > 0) byCategoryCount[cat] = pats.length;
@@ -73,24 +94,20 @@ export function analyzePatterns(rootDir: string, logger: Logger): ArchitectureRe
     }
   }
 
-  // Detect layers
   const layers = detectLayers(scanResults, rootDir);
-  // Annotate layers with patterns found in them
   for (const layer of layers) {
-    const layerPatterns = new Set<string>();
+    const layerPats = new Set<string>();
     for (const p of allPatterns) {
       for (const loc of p.locations) {
-        if (layer.files.includes(loc.filePath)) layerPatterns.add(p.pattern);
+        if (layer.files.includes(loc.filePath)) layerPats.add(p.pattern);
       }
     }
-    layer.patterns = [...layerPatterns];
+    layer.patterns = [...layerPats];
   }
 
   const durationMs = Math.round(performance.now() - startMs);
   logger.info('patterns', 'pattern analysis complete', {
-    totalPatterns: allPatterns.length,
-    byCategory: byCategoryCount,
-    durationMs,
+    totalPatterns: allPatterns.length, byCategory: byCategoryCount, durationMs,
   });
 
   return {
@@ -102,7 +119,7 @@ export function analyzePatterns(rootDir: string, logger: Logger): ArchitectureRe
     stats: {
       totalPatterns: allPatterns.length,
       byCategory: byCategoryCount,
-      coveragePercent: files.length > 0 ? Math.round((filesInPatterns.size / files.length) * 100) : 0,
+      coveragePercent: index.summaries.size > 0 ? Math.round((filesInPatterns.size / index.summaries.size) * 100) : 0,
     },
   };
 }
