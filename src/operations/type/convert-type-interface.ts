@@ -1,7 +1,7 @@
 import { Project, Node, SyntaxKind } from 'ts-morph';
-import type { ChangeSet, FileChange } from '../../core/change-set.js';
-import { createChangeSet } from '../../core/change-set.js';
+import type { ChangeSet } from '../../core/change-set.js';
 import type { Logger } from '../../core/logger.js';
+import { executeRefactoring, preconditionOk, preconditionFail } from '../engine.js';
 
 export interface ConvertTypeInterfaceArgs {
   filePath: string;
@@ -16,113 +16,151 @@ export function convertTypeInterface(project: Project, args: ConvertTypeInterfac
   const sourceFile = project.getSourceFile(filePath);
   if (!sourceFile) {
     logger.warn('convert-type-interface', 'source file not found', { filePath });
-    return createChangeSet('Convert type/interface (no changes)', []);
+    return executeRefactoring(
+      project,
+      'Convert type/interface (no changes)',
+      () => preconditionFail(['source file not found']),
+      () => {},
+      logger,
+    );
   }
-
-  const original = sourceFile.getFullText();
 
   const pos = sourceFile.compilerNode.getPositionOfLineAndCharacter(line - 1, col - 1);
   const node = sourceFile.getDescendantAtPos(pos);
 
   if (!node || !Node.isIdentifier(node)) {
     logger.warn('convert-type-interface', 'no identifier at position', { filePath, line, col });
-    return createChangeSet('Convert type/interface (no identifier)', []);
+    return executeRefactoring(
+      project,
+      'Convert type/interface (no identifier)',
+      () => preconditionFail(['no identifier at position']),
+      () => {},
+      logger,
+    );
   }
 
   const name = node.getText();
-
-  // Check if it's a type alias
   const typeAlias = sourceFile.getTypeAlias(name);
+  const iface = sourceFile.getInterface(name);
+
   if (typeAlias) {
-    return typeAliasToInterface(sourceFile, typeAlias, name, original, logger);
+    return typeAliasToInterface(project, sourceFile, typeAlias, name, logger);
   }
 
-  // Check if it's an interface
-  const iface = sourceFile.getInterface(name);
   if (iface) {
-    return interfaceToTypeAlias(sourceFile, iface, name, original, logger);
+    return interfaceToTypeAlias(project, sourceFile, iface, name, logger);
   }
 
   logger.warn('convert-type-interface', 'not a type alias or interface', { name });
-  return createChangeSet('Convert type/interface (not found)', []);
+  return executeRefactoring(
+    project,
+    'Convert type/interface (not found)',
+    () => preconditionFail([`'${name}' is not a type alias or interface`]),
+    () => {},
+    logger,
+  );
 }
 
 function typeAliasToInterface(
+  project: Project,
   sourceFile: ReturnType<Project['getSourceFileOrThrow']>,
   typeAlias: ReturnType<ReturnType<Project['getSourceFileOrThrow']>['getTypeAliasOrThrow']>,
   name: string,
-  original: string,
   logger: Logger,
 ): ChangeSet {
-  logger.info('convert-type-interface', 'converting type alias to interface', { name });
+  return executeRefactoring(
+    project,
+    `Convert type '${name}' to interface`,
+    () => {
+      const typeNode = typeAlias.getTypeNode();
+      if (!typeNode) {
+        return preconditionFail(['type alias has no type node']);
+      }
+      // Must be an object literal type (starts with '{')
+      if (!typeNode.getText().startsWith('{')) {
+        logger.warn('convert-type-interface', 'type is not an object literal', { name, typeText: typeNode.getText() });
+        return preconditionFail([`type '${name}' is not an object literal type`]);
+      }
+      return preconditionOk();
+    },
+    () => {
+      logger.info('convert-type-interface', 'converting type alias to interface', { name });
 
-  const typeNode = typeAlias.getTypeNode();
-  if (!typeNode) {
-    return createChangeSet('Convert type/interface (no type node)', []);
-  }
+      const typeNode = typeAlias.getTypeNode()!;
+      const isExported = typeAlias.isExported();
 
-  // Get the type literal body — works for object literal types
-  const typeText = typeNode.getText();
-  const isExported = typeAlias.isExported();
-  const exportPrefix = isExported ? 'export ' : '';
+      // Extract members from the type literal node
+      const members: Array<{ name: string; type: string; hasQuestionToken?: boolean }> = [];
 
-  // Build interface text from the type literal
-  // For `type X = { a: number; b: string; }`, we want `interface X { a: number; b: string; }`
-  let bodyText = typeText;
-  // If it's wrapped in { }, use it directly as the interface body
-  if (bodyText.startsWith('{')) {
-    // Already an object literal shape
-  } else {
-    // Not an object type — can't convert
-    logger.warn('convert-type-interface', 'type is not an object literal', { name, typeText });
-    return createChangeSet('Convert type/interface (not an object type)', []);
-  }
+      // Get property signatures from the type literal
+      if (Node.isTypeLiteral(typeNode)) {
+        for (const member of typeNode.getMembers()) {
+          if (Node.isPropertySignature(member)) {
+            const memberName = member.getName();
+            const memberType = member.getTypeNode()?.getText() ?? member.getType().getText();
+            members.push({
+              name: memberName,
+              type: memberType,
+              hasQuestionToken: member.hasQuestionToken(),
+            });
+          }
+        }
+      }
 
-  const interfaceText = `${exportPrefix}interface ${name} ${bodyText}`;
+      // Get the index of the type alias in the source file statements
+      const stmtIndex = sourceFile.getStatements().indexOf(typeAlias);
 
-  // Replace the type alias with the interface
-  const start = typeAlias.getStart();
-  const end = typeAlias.getEnd();
+      // Remove the type alias
+      typeAlias.remove();
 
-  const modified = original.slice(0, start) + interfaceText + original.slice(end);
+      // Insert interface at same position
+      sourceFile.insertInterface(stmtIndex, {
+        name,
+        isExported,
+        properties: members,
+      });
 
-  const files: FileChange[] = [];
-  if (original !== modified) {
-    files.push({ path: sourceFile.getFilePath(), original, modified });
-  }
-
-  logger.info('convert-type-interface', 'conversion complete', { name, direction: 'type→interface' });
-  return createChangeSet(`Convert type '${name}' to interface`, files);
+      logger.info('convert-type-interface', 'conversion complete', { name, direction: 'type->interface' });
+    },
+    logger,
+  );
 }
 
 function interfaceToTypeAlias(
+  project: Project,
   sourceFile: ReturnType<Project['getSourceFileOrThrow']>,
   iface: ReturnType<ReturnType<Project['getSourceFileOrThrow']>['getInterfaceOrThrow']>,
   name: string,
-  original: string,
   logger: Logger,
 ): ChangeSet {
-  logger.info('convert-type-interface', 'converting interface to type alias', { name });
+  return executeRefactoring(
+    project,
+    `Convert interface '${name}' to type`,
+    () => preconditionOk(),
+    () => {
+      logger.info('convert-type-interface', 'converting interface to type alias', { name });
 
-  const isExported = iface.isExported();
-  const exportPrefix = isExported ? 'export ' : '';
+      const isExported = iface.isExported();
 
-  // Build the object literal from interface members
-  const members = iface.getMembers().map((m) => m.getText()).join('\n  ');
-  const typeBody = `{\n  ${members}\n}`;
+      // Build the object literal from interface members
+      const membersText = iface.getMembers().map((m) => m.getText()).join('\n  ');
+      const typeBody = `{\n  ${membersText}\n}`;
 
-  const typeAliasText = `${exportPrefix}type ${name} = ${typeBody};`;
+      // Get the index of the interface in the source file statements
+      const stmtIndex = sourceFile.getStatements().indexOf(iface);
 
-  const start = iface.getStart();
-  const end = iface.getEnd();
+      // Remove the interface
+      iface.remove();
 
-  const modified = original.slice(0, start) + typeAliasText + original.slice(end);
+      // Insert type alias at same position
+      sourceFile.insertTypeAlias(stmtIndex, {
+        name,
+        isExported,
+        type: typeBody,
+      });
 
-  const files: FileChange[] = [];
-  if (original !== modified) {
-    files.push({ path: sourceFile.getFilePath(), original, modified });
-  }
-
-  logger.info('convert-type-interface', 'conversion complete', { name, direction: 'interface→type' });
-  return createChangeSet(`Convert interface '${name}' to type`, files);
+      logger.info('convert-type-interface', 'conversion complete', { name, direction: 'interface->type' });
+    },
+    logger,
+  );
 }

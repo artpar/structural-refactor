@@ -1,7 +1,7 @@
-import { Project, Node, SyntaxKind } from 'ts-morph';
-import type { ChangeSet, FileChange } from '../../core/change-set.js';
-import { createChangeSet } from '../../core/change-set.js';
+import { Project, Node } from 'ts-morph';
+import type { ChangeSet } from '../../core/change-set.js';
 import type { Logger } from '../../core/logger.js';
+import { executeRefactoring, preconditionOk, preconditionFail } from '../engine.js';
 
 export interface SafeDeleteArgs {
   filePath: string;
@@ -15,7 +15,13 @@ export function safeDelete(project: Project, args: SafeDeleteArgs): ChangeSet {
   const sourceFile = project.getSourceFile(filePath);
   if (!sourceFile) {
     logger.warn('safe-delete', 'source file not found', { filePath });
-    return createChangeSet('Safe delete (no changes)', []);
+    return executeRefactoring(
+      project,
+      'Safe delete (no changes)',
+      () => preconditionFail(['source file not found']),
+      () => {},
+      logger,
+    );
   }
 
   // Find the declaration by name in the AST
@@ -27,63 +33,61 @@ export function safeDelete(project: Project, args: SafeDeleteArgs): ChangeSet {
     sourceFile.getEnum(symbolName) ??
     sourceFile.getVariableDeclaration(symbolName);
 
-  if (!decl) {
-    logger.warn('safe-delete', 'symbol not found', { symbolName, filePath });
-    return createChangeSet('Safe delete (symbol not found)', []);
-  }
-
-  logger.info('safe-delete', 'checking references', { symbolName, filePath });
-
-  // Check if the symbol has any references (beyond its own declaration)
-  const refs = decl.findReferences();
-  let refCount = 0;
-  for (const refGroup of refs) {
-    for (const ref of refGroup.getReferences()) {
-      if (!ref.isDefinition()) {
-        refCount++;
+  return executeRefactoring(
+    project,
+    `Safe delete '${symbolName}'`,
+    () => {
+      if (!decl) {
+        return preconditionFail([`symbol '${symbolName}' not found in ${filePath}`]);
       }
-    }
-  }
 
-  if (refCount > 0) {
-    logger.info('safe-delete', 'symbol has references, cannot delete', {
-      symbolName, referenceCount: refCount,
-    });
-    return createChangeSet('Safe delete (has references)', []);
-  }
+      logger.info('safe-delete', 'checking references', { symbolName, filePath });
 
-  logger.info('safe-delete', 'deleting unreferenced symbol', { symbolName });
+      // Check if the symbol has any references (beyond its own declaration)
+      const refs = decl.findReferences();
+      let refCount = 0;
+      for (const refGroup of refs) {
+        for (const ref of refGroup.getReferences()) {
+          if (!ref.isDefinition()) {
+            refCount++;
+          }
+        }
+      }
 
-  const original = sourceFile.getFullText();
+      if (refCount > 0) {
+        logger.info('safe-delete', 'symbol has references, cannot delete', {
+          symbolName, referenceCount: refCount,
+        });
+        return preconditionFail([`symbol '${symbolName}' has ${refCount} references`]);
+      }
 
-  // Remove the declaration via ts-morph — dispatch by concrete type
-  if (Node.isVariableDeclaration(decl)) {
-    const stmt = decl.getVariableStatement();
-    if (stmt && stmt.getDeclarations().length === 1) {
-      stmt.remove();
-    } else {
-      decl.remove();
-    }
-  } else if (Node.isFunctionDeclaration(decl)) {
-    decl.remove();
-  } else if (Node.isClassDeclaration(decl)) {
-    decl.remove();
-  } else if (Node.isInterfaceDeclaration(decl)) {
-    decl.remove();
-  } else if (Node.isTypeAliasDeclaration(decl)) {
-    decl.remove();
-  } else if (Node.isEnumDeclaration(decl)) {
-    decl.remove();
-  }
+      return preconditionOk();
+    },
+    () => {
+      logger.info('safe-delete', 'deleting unreferenced symbol', { symbolName });
 
-  const modified = sourceFile.getFullText();
+      // Remove the declaration via ts-morph — dispatch by concrete type
+      if (Node.isVariableDeclaration(decl!)) {
+        const stmt = decl.getVariableStatement();
+        if (stmt && stmt.getDeclarations().length === 1) {
+          stmt.remove();
+        } else {
+          decl.remove();
+        }
+      } else if (Node.isFunctionDeclaration(decl!)) {
+        decl!.remove();
+      } else if (Node.isClassDeclaration(decl!)) {
+        decl!.remove();
+      } else if (Node.isInterfaceDeclaration(decl!)) {
+        decl!.remove();
+      } else if (Node.isTypeAliasDeclaration(decl!)) {
+        decl!.remove();
+      } else if (Node.isEnumDeclaration(decl!)) {
+        decl!.remove();
+      }
 
-  const files: FileChange[] = [];
-  if (original !== modified) {
-    files.push({ path: filePath, original, modified });
-  }
-
-  logger.info('safe-delete', 'deletion complete', { symbolName, filesChanged: files.length });
-
-  return createChangeSet(`Safe delete '${symbolName}'`, files);
+      logger.info('safe-delete', 'deletion complete', { symbolName });
+    },
+    logger,
+  );
 }

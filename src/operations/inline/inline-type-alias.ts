@@ -1,7 +1,12 @@
+/**
+ * Inline Type Alias: replace all type references with the alias definition, remove alias.
+ * Cross-file: uses findReferences() across ALL project files.
+ * All mutations via ts-morph API.
+ */
 import { Project, Node, SyntaxKind } from 'ts-morph';
-import type { ChangeSet, FileChange } from '../../core/change-set.js';
-import { createChangeSet } from '../../core/change-set.js';
+import type { ChangeSet } from '../../core/change-set.js';
 import type { Logger } from '../../core/logger.js';
+import { executeRefactoring, preconditionOk, preconditionFail } from '../engine.js';
 
 export interface InlineTypeAliasArgs {
   filePath: string;
@@ -15,80 +20,77 @@ export function inlineTypeAlias(project: Project, args: InlineTypeAliasArgs): Ch
 
   const sourceFile = project.getSourceFile(filePath);
   if (!sourceFile) {
-    logger.warn('inline-type-alias', 'source file not found', { filePath });
-    return createChangeSet('Inline type alias (no changes)', []);
+    return executeRefactoring(project, 'Inline type alias', () => preconditionFail(['source file not found']), () => {}, logger);
   }
-
-  const original = sourceFile.getFullText();
 
   const pos = sourceFile.compilerNode.getPositionOfLineAndCharacter(line - 1, col - 1);
   const node = sourceFile.getDescendantAtPos(pos);
-
   if (!node || !Node.isIdentifier(node)) {
-    logger.warn('inline-type-alias', 'no identifier at position', { filePath, line, col });
-    return createChangeSet('Inline type alias (no identifier)', []);
+    return executeRefactoring(project, 'Inline type alias', () => preconditionFail(['no identifier at position']), () => {}, logger);
   }
 
   const typeName = node.getText();
-
-  // Find the type alias declaration
   const typeAlias = sourceFile.getTypeAlias(typeName);
   if (!typeAlias) {
-    logger.warn('inline-type-alias', 'not a type alias', { typeName });
-    return createChangeSet('Inline type alias (not found)', []);
+    return executeRefactoring(project, 'Inline type alias', () => preconditionFail(['not a type alias']), () => {}, logger);
   }
 
   const typeNode = typeAlias.getTypeNode();
   if (!typeNode) {
-    logger.warn('inline-type-alias', 'type alias has no type', { typeName });
-    return createChangeSet('Inline type alias (no type)', []);
+    return executeRefactoring(project, 'Inline type alias', () => preconditionFail(['type alias has no type']), () => {}, logger);
   }
 
   const typeText = typeNode.getText();
 
-  logger.info('inline-type-alias', 'inlining type alias', {
-    typeName,
-    typeText: typeText.slice(0, 50),
-  });
+  logger.info('inline-type-alias', 'inlining type alias', { typeName, typeText: typeText.slice(0, 50) });
 
-  // Find all references to this type alias
+  // Find ALL references across ALL files
   const refs = typeAlias.findReferences();
-  const referenceNodes: { start: number; end: number }[] = [];
-
+  const refNodes: Node[] = [];
   for (const refGroup of refs) {
     for (const ref of refGroup.getReferences()) {
-      const refNode = ref.getNode();
-      // Skip the declaration itself
-      if (refNode.getStart() === typeAlias.getNameNode().getStart()) continue;
-      referenceNodes.push({ start: refNode.getStart(), end: refNode.getEnd() });
+      if (ref.isDefinition()) continue;
+      refNodes.push(ref.getNode());
     }
   }
 
-  // Sort last to first
-  referenceNodes.sort((a, b) => b.start - a.start);
-
-  // Replace all references with the type definition
-  let modified = original;
-  for (const ref of referenceNodes) {
-    modified = modified.slice(0, ref.start) + typeText + modified.slice(ref.end);
-  }
-
-  // Remove the type alias declaration line
-  const aliasStart = typeAlias.getFullStart();
-  const aliasEnd = typeAlias.getEnd();
-  let removeEnd = aliasEnd;
-  if (modified[removeEnd] === '\n') removeEnd++;
-
-  modified = modified.slice(0, aliasStart) + modified.slice(removeEnd);
-
-  const files: FileChange[] = [];
-  if (original !== modified) {
-    files.push({ path: filePath, original, modified });
-  }
-
-  logger.info('inline-type-alias', 'inline complete', {
-    typeName, referencesInlined: referenceNodes.length, filesChanged: files.length,
+  logger.debug('inline-type-alias', 'found references', {
+    typeName,
+    referenceCount: refNodes.length,
+    files: [...new Set(refNodes.map((n) => n.getSourceFile().getFilePath()))],
   });
 
-  return createChangeSet(`Inline type alias '${typeName}'`, files);
+  return executeRefactoring(
+    project,
+    `Inline type alias '${typeName}'`,
+    () => preconditionOk(),
+    () => {
+      // Replace all references with the type definition (cross-file!)
+      const byFile = new Map<string, Node[]>();
+      for (const ref of refNodes) {
+        const fp = ref.getSourceFile().getFilePath();
+        const list = byFile.get(fp) ?? [];
+        list.push(ref);
+        byFile.set(fp, list);
+      }
+
+      for (const [, fileRefs] of byFile) {
+        fileRefs.sort((a, b) => b.getStart() - a.getStart());
+        for (const ref of fileRefs) {
+          // Replace the TypeReference parent (not just the identifier) to handle
+          // node kind changes (e.g., TypeReference → StringKeyword)
+          const parent = ref.getParent();
+          if (parent && Node.isTypeReference(parent)) {
+            parent.replaceWithText(typeText);
+          } else {
+            ref.replaceWithText(typeText);
+          }
+        }
+      }
+
+      // Remove the type alias declaration
+      typeAlias.remove();
+    },
+    logger,
+  );
 }

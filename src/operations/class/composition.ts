@@ -1,7 +1,7 @@
-import { Project, Node, Scope } from 'ts-morph';
-import type { ChangeSet, FileChange } from '../../core/change-set.js';
-import { createChangeSet } from '../../core/change-set.js';
+import { Project, Scope } from 'ts-morph';
+import type { ChangeSet } from '../../core/change-set.js';
 import type { Logger } from '../../core/logger.js';
+import { executeRefactoring, preconditionOk, preconditionFail } from '../engine.js';
 
 export interface CompositionArgs {
   filePath: string;
@@ -13,93 +13,86 @@ export function replaceInheritanceWithComposition(project: Project, args: Compos
   const { filePath, className, logger } = args;
 
   const sourceFile = project.getSourceFile(filePath);
-  if (!sourceFile) {
-    logger.warn('composition', 'source file not found', { filePath });
-    return createChangeSet('Composition (no changes)', []);
-  }
+  const classDecl = sourceFile?.getClass(className);
+  const extendsExpr = classDecl?.getExtends();
 
-  const classDecl = sourceFile.getClass(className);
-  if (!classDecl) {
-    logger.warn('composition', 'class not found', { className, filePath });
-    return createChangeSet('Composition (class not found)', []);
-  }
+  return executeRefactoring(
+    project,
+    `Replace inheritance with composition in '${className}'`,
+    () => {
+      if (!sourceFile) {
+        return preconditionFail([`source file not found: ${filePath}`]);
+      }
+      if (!classDecl) {
+        return preconditionFail([`class '${className}' not found in ${filePath}`]);
+      }
+      if (!extendsExpr) {
+        logger.info('composition', 'class does not extend anything', { className });
+        return preconditionFail([`class '${className}' does not extend anything`]);
+      }
+      return preconditionOk();
+    },
+    () => {
+      const parentName = extendsExpr!.getText();
+      const parentClass = sourceFile!.getClass(parentName);
 
-  const extendsExpr = classDecl.getExtends();
-  if (!extendsExpr) {
-    logger.info('composition', 'class does not extend anything', { className });
-    return createChangeSet('Composition (no inheritance)', []);
-  }
-
-  const parentName = extendsExpr.getText();
-  const parentClass = sourceFile.getClass(parentName);
-
-  logger.info('composition', 'replacing inheritance with composition', {
-    className, parentName, filePath,
-  });
-
-  const original = sourceFile.getFullText();
-
-  // Collect parent's public methods to create forwarding delegates
-  const parentMethods: { name: string; params: string; returnType: string; isAsync: boolean }[] = [];
-
-  if (parentClass) {
-    for (const method of parentClass.getMethods()) {
-      if (method.getScope() === Scope.Private) continue;
-      parentMethods.push({
-        name: method.getName(),
-        params: method.getParameters().map((p) => p.getText()).join(', '),
-        returnType: method.getReturnTypeNode()?.getText() ?? '',
-        isAsync: method.isAsync(),
+      logger.info('composition', 'replacing inheritance with composition', {
+        className, parentName, filePath,
       });
-    }
-  }
 
-  const delegateFieldName = `_${parentName.charAt(0).toLowerCase()}${parentName.slice(1)}`;
+      // Collect parent's public methods to create forwarding delegates
+      const parentMethods: { name: string; params: string; returnType: string; isAsync: boolean }[] = [];
 
-  // Remove extends clause
-  classDecl.removeExtends();
+      if (parentClass) {
+        for (const method of parentClass.getMethods()) {
+          if (method.getScope() === Scope.Private) continue;
+          parentMethods.push({
+            name: method.getName(),
+            params: method.getParameters().map((p) => p.getText()).join(', '),
+            returnType: method.getReturnTypeNode()?.getText() ?? '',
+            isAsync: method.isAsync(),
+          });
+        }
+      }
 
-  // Add delegate field
-  classDecl.insertProperty(0, {
-    name: delegateFieldName,
-    scope: Scope.Private,
-    initializer: `new ${parentName}()`,
-  });
+      const delegateFieldName = `_${parentName.charAt(0).toLowerCase()}${parentName.slice(1)}`;
 
-  // Add forwarding methods for parent methods (only if not already overridden)
-  const existingMethods = new Set(classDecl.getMethods().map((m) => m.getName()));
+      // Remove extends clause
+      classDecl!.removeExtends();
 
-  for (const pm of parentMethods) {
-    if (existingMethods.has(pm.name)) continue;
+      // Add delegate field
+      classDecl!.insertProperty(0, {
+        name: delegateFieldName,
+        scope: Scope.Private,
+        initializer: `new ${parentName}()`,
+      });
 
-    const asyncPrefix = pm.isAsync ? 'async ' : '';
-    const awaitPrefix = pm.isAsync ? 'await ' : '';
-    const paramNames = pm.params
-      ? pm.params.split(',').map((p) => p.trim().split(/[:\s]/)[0]).join(', ')
-      : '';
-    const returnAnnotation = pm.returnType ? `: ${pm.returnType}` : '';
+      // Add forwarding methods for parent methods (only if not already overridden)
+      const existingMethods = new Set(classDecl!.getMethods().map((m) => m.getName()));
 
-    classDecl.addMethod({
-      name: pm.name,
-      parameters: pm.params ? pm.params.split(',').map((p) => {
-        const parts = p.trim().split(':');
-        return { name: parts[0].trim(), type: parts[1]?.trim() };
-      }) : [],
-      isAsync: pm.isAsync,
-      statements: [`return ${awaitPrefix}this.${delegateFieldName}.${pm.name}(${paramNames});`],
-    });
-  }
+      for (const pm of parentMethods) {
+        if (existingMethods.has(pm.name)) continue;
 
-  const modified = sourceFile.getFullText();
+        const awaitPrefix = pm.isAsync ? 'await ' : '';
+        const paramNames = pm.params
+          ? pm.params.split(',').map((p) => p.trim().split(/[:\s]/)[0]).join(', ')
+          : '';
 
-  const files: FileChange[] = [];
-  if (original !== modified) {
-    files.push({ path: filePath, original, modified });
-  }
+        classDecl!.addMethod({
+          name: pm.name,
+          parameters: pm.params ? pm.params.split(',').map((p) => {
+            const parts = p.trim().split(':');
+            return { name: parts[0].trim(), type: parts[1]?.trim() };
+          }) : [],
+          isAsync: pm.isAsync,
+          statements: [`return ${awaitPrefix}this.${delegateFieldName}.${pm.name}(${paramNames});`],
+        });
+      }
 
-  logger.info('composition', 'conversion complete', {
-    className, parentName, forwardedMethods: parentMethods.length, filesChanged: files.length,
-  });
-
-  return createChangeSet(`Replace inheritance with composition in '${className}'`, files);
+      logger.info('composition', 'conversion complete', {
+        className, parentName, forwardedMethods: parentMethods.length,
+      });
+    },
+    logger,
+  );
 }

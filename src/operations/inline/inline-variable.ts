@@ -1,7 +1,12 @@
+/**
+ * Inline Variable: replace all usages with the initializer value, remove declaration.
+ * Cross-file: uses findReferences() which returns references in ALL project files.
+ * All mutations via ts-morph API — no string manipulation.
+ */
 import { Project, Node, SyntaxKind } from 'ts-morph';
-import type { ChangeSet, FileChange } from '../../core/change-set.js';
-import { createChangeSet } from '../../core/change-set.js';
+import type { ChangeSet } from '../../core/change-set.js';
 import type { Logger } from '../../core/logger.js';
+import { executeRefactoring, preconditionOk, preconditionFail } from '../engine.js';
 
 export interface InlineVariableArgs {
   filePath: string;
@@ -16,133 +21,100 @@ export function inlineVariable(project: Project, args: InlineVariableArgs): Chan
   const sourceFile = project.getSourceFile(filePath);
   if (!sourceFile) {
     logger.warn('inline-variable', 'source file not found', { filePath });
-    return createChangeSet('Inline variable (no changes)', []);
+    return executeRefactoring(project, 'Inline variable', () => preconditionFail(['source file not found']), () => {}, logger);
   }
 
-  const original = sourceFile.getFullText();
-
-  // Find the identifier at the position
+  // Find the identifier at position
   const pos = sourceFile.compilerNode.getPositionOfLineAndCharacter(line - 1, col - 1);
   const node = sourceFile.getDescendantAtPos(pos);
-
   if (!node || !Node.isIdentifier(node)) {
-    logger.warn('inline-variable', 'no identifier at position', { filePath, line, col });
-    return createChangeSet('Inline variable (no identifier)', []);
+    return executeRefactoring(project, 'Inline variable', () => preconditionFail(['no identifier at position']), () => {}, logger);
   }
 
   const varName = node.getText();
 
-  // Find the variable declaration for this identifier
-  const parent = node.getParent();
-  let varDecl = Node.isVariableDeclaration(parent) ? parent : undefined;
-
-  if (!varDecl) {
-    // The identifier might be a reference, not the declaration — find the declaration
+  // Find the variable declaration
+  let varDecl = Node.isVariableDeclaration(node.getParent()) ? node.getParent()! : undefined;
+  if (!varDecl || !Node.isVariableDeclaration(varDecl)) {
     const symbol = node.getSymbol();
     if (symbol) {
-      const declarations = symbol.getDeclarations();
-      for (const decl of declarations) {
-        if (Node.isVariableDeclaration(decl)) {
-          varDecl = decl;
-          break;
-        }
+      for (const decl of symbol.getDeclarations()) {
+        if (Node.isVariableDeclaration(decl)) { varDecl = decl; break; }
       }
     }
   }
 
-  if (!varDecl) {
-    logger.warn('inline-variable', 'variable declaration not found', { varName });
-    return createChangeSet('Inline variable (not a variable)', []);
+  if (!varDecl || !Node.isVariableDeclaration(varDecl)) {
+    return executeRefactoring(project, 'Inline variable', () => preconditionFail(['not a variable declaration']), () => {}, logger);
   }
 
-  // Get the initializer expression
   const initializer = varDecl.getInitializer();
   if (!initializer) {
-    logger.warn('inline-variable', 'variable has no initializer', { varName });
-    return createChangeSet('Inline variable (no initializer)', []);
+    return executeRefactoring(project, 'Inline variable', () => preconditionFail(['variable has no initializer']), () => {}, logger);
   }
 
   const initText = initializer.getText();
 
-  logger.info('inline-variable', 'inlining variable', {
-    varName,
-    initializerText: initText.slice(0, 50),
-  });
+  logger.info('inline-variable', 'inlining variable', { varName, initializerText: initText.slice(0, 50) });
 
-  // Find all references to this variable via ts-morph AST
+  // Find ALL references across ALL files
   const refs = varDecl.findReferences();
-  const referenceNodes: { start: number; end: number }[] = [];
-
+  const refNodes: Node[] = [];
   for (const refGroup of refs) {
     for (const ref of refGroup.getReferences()) {
-      const refNode = ref.getNode();
-      // Skip the declaration itself
-      if (refNode.getStart() === varDecl.getNameNode().getStart()) continue;
-      referenceNodes.push({ start: refNode.getStart(), end: refNode.getEnd() });
+      if (ref.isDefinition()) continue;
+      refNodes.push(ref.getNode());
     }
   }
 
   logger.debug('inline-variable', 'found references', {
-    varName, referenceCount: referenceNodes.length,
+    varName, referenceCount: refNodes.length,
+    files: [...new Set(refNodes.map((n) => n.getSourceFile().getFilePath()))],
   });
 
-  // Sort references from last to first so position shifts don't affect earlier replacements
-  referenceNodes.sort((a, b) => b.start - a.start);
+  const capturedVarDecl = varDecl;
 
-  // Replace all references with the initializer text
-  let modified = original;
-  for (const ref of referenceNodes) {
-    modified = modified.slice(0, ref.start) + initText + modified.slice(ref.end);
-  }
+  return executeRefactoring(
+    project,
+    `Inline variable '${varName}'`,
+    () => {
+      // Preconditions
+      const errors: string[] = [];
+      const warnings: string[] = [];
 
-  // Remove the variable declaration statement
-  const varStatement = varDecl.getVariableStatement();
-  if (varStatement) {
-    // If the statement has only this declaration, remove the whole statement
-    if (varStatement.getDeclarations().length === 1) {
-      const stmtStart = varStatement.getFullStart();
-      const stmtEnd = varStatement.getEnd();
-      // Account for position shifts from reference replacements
-      // Since we sorted refs last-to-first, all replacements are after the declaration
-      // (for local variables), so the declaration position is unchanged
-      // Actually, some refs could be before the decl (hoisting), but for const/let that's rare
+      if (refNodes.length === 0) {
+        warnings.push('variable has no usages — will just remove declaration');
+      }
 
-      // Recalculate: we need to find the declaration in the modified text
-      // Simpler approach: remove from original positions, adjusting for prior edits
-      // Since refs were replaced last-to-first, only refs AFTER the decl shifted the text.
-      // Refs before the decl would have shifted the decl's position.
+      return preconditionOk(warnings);
+    },
+    () => {
+      // Replace all references with initializer text via ts-morph (cross-file!)
+      // Process in reverse order within each file to preserve positions
+      const byFile = new Map<string, Node[]>();
+      for (const ref of refNodes) {
+        const fp = ref.getSourceFile().getFilePath();
+        const list = byFile.get(fp) ?? [];
+        list.push(ref);
+        byFile.set(fp, list);
+      }
 
-      // Actually let's use a different approach: do all edits on the original positions
-      // by collecting all edits and applying them in reverse order
-
-      // For now, find and remove the declaration line in the modified text
-      const declLineStart = findLineStart(modified, modified.indexOf(`${varDecl.getVariableStatement()!.getDeclarationKind()} ${varName}`));
-      if (declLineStart >= 0) {
-        const declLineEnd = modified.indexOf('\n', declLineStart);
-        if (declLineEnd >= 0) {
-          modified = modified.slice(0, declLineStart) + modified.slice(declLineEnd + 1);
+      for (const [, fileRefs] of byFile) {
+        // Sort by position descending so replacements don't shift later positions
+        fileRefs.sort((a, b) => b.getStart() - a.getStart());
+        for (const ref of fileRefs) {
+          ref.replaceWithText(initText);
         }
       }
-    }
-  }
 
-  const files: FileChange[] = [];
-  if (original !== modified) {
-    files.push({ path: filePath, original, modified });
-  }
-
-  logger.info('inline-variable', 'inline complete', {
-    varName, filesChanged: files.length,
-  });
-
-  return createChangeSet(`Inline variable '${varName}'`, files);
-}
-
-function findLineStart(text: string, pos: number): number {
-  if (pos < 0) return -1;
-  let lineStart = pos;
-  while (lineStart > 0 && text[lineStart - 1] !== '\n') {
-    lineStart--;
-  }
-  return lineStart;
+      // Remove the declaration
+      const varStatement = capturedVarDecl.getVariableStatement();
+      if (varStatement && varStatement.getDeclarations().length === 1) {
+        varStatement.remove();
+      } else {
+        capturedVarDecl.remove();
+      }
+    },
+    logger,
+  );
 }

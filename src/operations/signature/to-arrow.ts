@@ -1,7 +1,7 @@
 import { Project, Node, SyntaxKind } from 'ts-morph';
-import type { ChangeSet, FileChange } from '../../core/change-set.js';
-import { createChangeSet } from '../../core/change-set.js';
+import type { ChangeSet } from '../../core/change-set.js';
 import type { Logger } from '../../core/logger.js';
+import { executeRefactoring, preconditionOk, preconditionFail } from '../engine.js';
 
 export interface ToArrowArgs {
   filePath: string;
@@ -16,77 +16,95 @@ export function toArrow(project: Project, args: ToArrowArgs): ChangeSet {
   const sourceFile = project.getSourceFile(filePath);
   if (!sourceFile) {
     logger.warn('to-arrow', 'source file not found', { filePath });
-    return createChangeSet('To arrow (no changes)', []);
+    return executeRefactoring(
+      project,
+      'To arrow (no changes)',
+      () => preconditionFail(['source file not found']),
+      () => {},
+      logger,
+    );
   }
-
-  const original = sourceFile.getFullText();
 
   const pos = sourceFile.compilerNode.getPositionOfLineAndCharacter(line - 1, col - 1);
   const node = sourceFile.getDescendantAtPos(pos);
 
   if (!node || !Node.isIdentifier(node)) {
     logger.warn('to-arrow', 'no identifier at position', { filePath, line, col });
-    return createChangeSet('To arrow (no identifier)', []);
+    return executeRefactoring(
+      project,
+      'To arrow (no identifier)',
+      () => preconditionFail(['no identifier at position']),
+      () => {},
+      logger,
+    );
   }
 
   const fnName = node.getText();
   const fnDecl = sourceFile.getFunction(fnName);
 
-  if (!fnDecl) {
-    logger.warn('to-arrow', 'not a function declaration', { fnName });
-    return createChangeSet('To arrow (not a function)', []);
-  }
+  return executeRefactoring(
+    project,
+    `Convert '${fnName}' to arrow function`,
+    () => {
+      if (!fnDecl) {
+        return preconditionFail([`function '${fnName}' not found`]);
+      }
 
-  logger.info('to-arrow', 'converting to arrow function', { fnName, filePath });
+      // Check for `this` usage — arrow functions bind `this` lexically
+      const body = fnDecl.getBody();
+      if (body) {
+        const thisKeywords = body.getDescendantsOfKind(SyntaxKind.ThisKeyword);
+        if (thisKeywords.length > 0) {
+          return preconditionFail([`function '${fnName}' uses 'this' keyword — cannot safely convert to arrow`]);
+        }
+      }
 
-  // Build arrow function text from the AST
-  const params = fnDecl.getParameters().map((p) => p.getText()).join(', ');
-  const returnType = fnDecl.getReturnTypeNode()?.getText();
-  const returnTypeAnnotation = returnType ? `: ${returnType}` : '';
-  const isExported = fnDecl.isExported();
-  const isAsync = fnDecl.isAsync();
+      return preconditionOk();
+    },
+    () => {
+      logger.info('to-arrow', 'converting to arrow function', { fnName, filePath });
 
-  // Get the body
-  const body = fnDecl.getBody();
-  let bodyText: string;
+      // Build arrow function text from the AST
+      const params = fnDecl!.getParameters().map((p) => p.getText()).join(', ');
+      const returnType = fnDecl!.getReturnTypeNode()?.getText();
+      const returnTypeAnnotation = returnType ? `: ${returnType}` : '';
+      const isExported = fnDecl!.isExported();
+      const isAsync = fnDecl!.isAsync();
 
-  if (body && Node.isBlock(body)) {
-    const statements = body.getStatements();
-    // If single return statement, use concise body
-    if (statements.length === 1 && Node.isReturnStatement(statements[0])) {
-      const returnExpr = statements[0].getExpression();
-      if (returnExpr) {
-        bodyText = returnExpr.getText();
+      // Get the body
+      const body = fnDecl!.getBody();
+      let bodyText: string;
+
+      if (body && Node.isBlock(body)) {
+        const statements = body.getStatements();
+        // If single return statement, use concise body
+        if (statements.length === 1 && Node.isReturnStatement(statements[0])) {
+          const returnExpr = statements[0].getExpression();
+          if (returnExpr) {
+            bodyText = returnExpr.getText();
+          } else {
+            bodyText = '{}';
+          }
+        } else {
+          bodyText = body.getText();
+        }
       } else {
         bodyText = '{}';
       }
-    } else {
-      bodyText = body.getText();
-    }
-  } else {
-    bodyText = '{}';
-  }
 
-  const asyncPrefix = isAsync ? 'async ' : '';
-  const exportPrefix = isExported ? 'export ' : '';
+      const asyncPrefix = isAsync ? 'async ' : '';
+      const exportPrefix = isExported ? 'export ' : '';
 
-  // Determine if body needs block or can be expression
-  const isExpression = !bodyText.startsWith('{');
-  const arrowBody = isExpression ? bodyText : ` ${bodyText}`;
-  const arrow = `${exportPrefix}const ${fnName} = ${asyncPrefix}(${params})${returnTypeAnnotation} =>${isExpression ? ' ' : ''}${arrowBody};`;
+      // Determine if body needs block or can be expression
+      const isExpression = !bodyText.startsWith('{');
+      const arrowBody = isExpression ? bodyText : ` ${bodyText}`;
+      const arrow = `${exportPrefix}const ${fnName} = ${asyncPrefix}(${params})${returnTypeAnnotation} =>${isExpression ? ' ' : ''}${arrowBody};`;
 
-  // Replace the function declaration
-  const fnStart = fnDecl.getStart();
-  const fnEnd = fnDecl.getEnd();
+      // Replace the function declaration via ts-morph replaceWithText
+      fnDecl!.replaceWithText(arrow);
 
-  const modified = original.slice(0, fnStart) + arrow + original.slice(fnEnd);
-
-  const files: FileChange[] = [];
-  if (original !== modified) {
-    files.push({ path: filePath, original, modified });
-  }
-
-  logger.info('to-arrow', 'conversion complete', { fnName, filesChanged: files.length });
-
-  return createChangeSet(`Convert '${fnName}' to arrow function`, files);
+      logger.info('to-arrow', 'conversion complete', { fnName });
+    },
+    logger,
+  );
 }
