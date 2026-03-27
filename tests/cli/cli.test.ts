@@ -21,7 +21,8 @@ describe('CLI program', () => {
     expect(commands).toContain('quality');
     expect(commands).toContain('class');
     expect(commands).toContain('analyze');
-    expect(commands).toHaveLength(11);
+    expect(commands).toContain('discover');
+    expect(commands).toHaveLength(12);
   });
 
   it('has global options', () => {
