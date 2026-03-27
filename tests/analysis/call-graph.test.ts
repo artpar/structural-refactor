@@ -6,24 +6,20 @@ import {
   type CallNode,
 } from '../../src/analysis/call-graph.js';
 import { createLogger } from '../../src/core/logger.js';
+import { makeSimpleLogger } from "../helpers/index.js";
 
 const FIXTURES = path.resolve(import.meta.dirname, '../fixtures');
-
-function makeLogger() {
-  return createLogger({ level: 'trace', sink: () => {} });
-}
-
 describe('CallGraph', () => {
   describe('simple project', () => {
     it('builds a cross-file call graph', () => {
-      const graph = buildCallGraph(path.join(FIXTURES, 'simple-project'), makeLogger());
+      const graph = buildCallGraph(path.join(FIXTURES, 'simple-project'), makeSimpleLogger());
 
       expect(graph).toBeDefined();
       expect(graph.nodes.size).toBeGreaterThanOrEqual(1);
     });
 
     it('tracks function definitions with file locations', () => {
-      const graph = buildCallGraph(path.join(FIXTURES, 'simple-project'), makeLogger());
+      const graph = buildCallGraph(path.join(FIXTURES, 'simple-project'), makeSimpleLogger());
 
       // math.ts defines add, multiply
       const addNode = findNode(graph, 'add');
@@ -33,7 +29,7 @@ describe('CallGraph', () => {
     });
 
     it('tracks cross-file calls', () => {
-      const graph = buildCallGraph(path.join(FIXTURES, 'simple-project'), makeLogger());
+      const graph = buildCallGraph(path.join(FIXTURES, 'simple-project'), makeSimpleLogger());
 
       // utils.ts calls add from math.ts
       const addNode = findNode(graph, 'add');
@@ -42,7 +38,7 @@ describe('CallGraph', () => {
     });
 
     it('tracks what each function calls', () => {
-      const graph = buildCallGraph(path.join(FIXTURES, 'simple-project'), makeLogger());
+      const graph = buildCallGraph(path.join(FIXTURES, 'simple-project'), makeSimpleLogger());
 
       // Find the sum function in utils.ts — it calls add
       const sumNode = findNode(graph, 'sum');
@@ -53,13 +49,13 @@ describe('CallGraph', () => {
 
   describe('test mapping', () => {
     it('identifies test files', () => {
-      const graph = buildCallGraph(path.join(FIXTURES, 'simple-project'), makeLogger());
+      const graph = buildCallGraph(path.join(FIXTURES, 'simple-project'), makeSimpleLogger());
       expect(graph.testFiles.length).toBeGreaterThanOrEqual(0); // simple-project has no tests dir
     });
 
     it('maps test files to source files for project with tests', () => {
       // Use our own project — it has tests
-      const graph = buildCallGraph(path.resolve(FIXTURES, '../..'), makeLogger());
+      const graph = buildCallGraph(path.resolve(FIXTURES, '../..'), makeSimpleLogger());
 
       expect(graph.testFiles.length).toBeGreaterThanOrEqual(1);
       expect(graph.sourceFiles.length).toBeGreaterThanOrEqual(1);
@@ -71,12 +67,12 @@ describe('CallGraph', () => {
 
   describe('stats', () => {
     it('provides function count', () => {
-      const graph = buildCallGraph(path.join(FIXTURES, 'simple-project'), makeLogger());
+      const graph = buildCallGraph(path.join(FIXTURES, 'simple-project'), makeSimpleLogger());
       expect(graph.stats.functionCount).toBeGreaterThanOrEqual(3); // add, multiply, sum, etc.
     });
 
     it('provides call edge count', () => {
-      const graph = buildCallGraph(path.join(FIXTURES, 'simple-project'), makeLogger());
+      const graph = buildCallGraph(path.join(FIXTURES, 'simple-project'), makeSimpleLogger());
       expect(graph.stats.callEdgeCount).toBeGreaterThanOrEqual(1);
     });
   });

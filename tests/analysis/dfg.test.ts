@@ -7,19 +7,14 @@ import {
   type FlowEdgeType,
 } from '../../src/analysis/dfg.js';
 import { createLogger } from '../../src/core/logger.js';
-import { makeProject } from "../helpers/index.js";
-
-function makeLogger() {
-  return createLogger({ level: 'trace', sink: () => {} });
-}
-
+import { makeProject, makeSimpleLogger } from "../helpers/index.js";
 describe('DFG builder', () => {
   describe('variable tracking', () => {
     it('tracks variable definition and usage', () => {
       const code = 'function f() {\n  const x = 1;\n  return x;\n}\n';
       const project = makeProject({ '/src/app.ts': code });
 
-      const dfg = buildDFG(project, '/src/app.ts', 'f', makeLogger());
+      const dfg = buildDFG(project, '/src/app.ts', 'f', makeSimpleLogger());
 
       expect(dfg).toBeDefined();
       // Should have a definition node for x and a usage node
@@ -37,7 +32,7 @@ describe('DFG builder', () => {
       const code = 'function f() {\n  let x = 1;\n  x = 2;\n  return x;\n}\n';
       const project = makeProject({ '/src/app.ts': code });
 
-      const dfg = buildDFG(project, '/src/app.ts', 'f', makeLogger());
+      const dfg = buildDFG(project, '/src/app.ts', 'f', makeSimpleLogger());
 
       expect(dfg).toBeDefined();
       const assignments = dfg!.nodes.filter((n) => n.name === 'x' && n.type === 'assignment');
@@ -50,7 +45,7 @@ describe('DFG builder', () => {
       const code = 'function add(a: number, b: number) {\n  return a + b;\n}\n';
       const project = makeProject({ '/src/app.ts': code });
 
-      const dfg = buildDFG(project, '/src/app.ts', 'add', makeLogger());
+      const dfg = buildDFG(project, '/src/app.ts', 'add', makeSimpleLogger());
 
       expect(dfg).toBeDefined();
       const aDef = dfg!.nodes.find((n) => n.name === 'a' && n.type === 'parameter');
@@ -70,7 +65,7 @@ function main() {
 }`;
       const project = makeProject({ '/src/app.ts': code });
 
-      const dfg = buildDFG(project, '/src/app.ts', 'main', makeLogger());
+      const dfg = buildDFG(project, '/src/app.ts', 'main', makeSimpleLogger());
 
       expect(dfg).toBeDefined();
       // x flows into double() call
@@ -87,7 +82,7 @@ function main() {
         '/src/app.ts': 'import { add } from "./math";\nfunction main() {\n  const result = add(1, 2);\n  return result;\n}\n',
       });
 
-      const dfg = buildDFG(project, '/src/app.ts', 'main', makeLogger());
+      const dfg = buildDFG(project, '/src/app.ts', 'main', makeSimpleLogger());
 
       expect(dfg).toBeDefined();
       // Should track the imported call
@@ -104,7 +99,7 @@ function main() {
       const code = 'function f() {\n  const x = 42;\n  return x;\n}\n';
       const project = makeProject({ '/src/app.ts': code });
 
-      const dfg = buildDFG(project, '/src/app.ts', 'f', makeLogger());
+      const dfg = buildDFG(project, '/src/app.ts', 'f', makeSimpleLogger());
 
       expect(dfg).toBeDefined();
       const returnNodes = dfg!.nodes.filter((n) => n.type === 'return');
@@ -114,7 +109,7 @@ function main() {
 
   it('returns undefined for nonexistent function', () => {
     const project = makeProject({ '/src/app.ts': 'const x = 1;\n' });
-    const dfg = buildDFG(project, '/src/app.ts', 'nope', makeLogger());
+    const dfg = buildDFG(project, '/src/app.ts', 'nope', makeSimpleLogger());
     expect(dfg).toBeUndefined();
   });
 

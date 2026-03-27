@@ -39,8 +39,10 @@ export function containsNewExpression(unit: CodeUnitRecord): boolean {
 }
 
 /**
- * Check if a return type refers to a project-defined class, interface, or type alias.
- * Excludes primitives, Promise<T>, Array<T>, Record<K,V>, and other utility types.
+ * Check if a return type refers to a project-defined CLASS (not interface/type).
+ * A true factory creates class instances. Returning an interface or type alias
+ * is just returning data — not a factory pattern.
+ * (Fix based on dogfooding: 11 FPs from operations returning ChangeSet interface)
  */
 export function returnTypeIsProjectType(returnType: string, allUnits: CodeUnitRecord[]): boolean {
   if (!returnType) return false;
@@ -48,13 +50,10 @@ export function returnTypeIsProjectType(returnType: string, allUnits: CodeUnitRe
   const cleaned = stripGenericWrapper(returnType);
   if (!cleaned) return false;
 
-  // Check against excluded types
   if (EXCLUDED_RETURN_TYPES.has(cleaned.toLowerCase())) return false;
 
-  // Check if any unit in the project has this name
-  return allUnits.some((u) =>
-    (u.kind === 'class' || u.kind === 'interface' || u.kind === 'type') && u.name === cleaned,
-  );
+  // Only match classes — interfaces and type aliases are value types, not factory products
+  return allUnits.some((u) => u.kind === 'class' && u.name === cleaned);
 }
 
 /**

@@ -21,6 +21,11 @@ export function makeProject(files: Record<string, string>): Project {
   return project;
 }
 
+/** Create a simple test logger (returns Logger directly, no entries capture) */
+export function makeSimpleLogger(): Logger {
+  return createLogger({ level: 'trace', sink: () => {} });
+}
+
 /** Parse code into a ts-morph SourceFile for verification */
 export function parseAst(code: string) {
   const p = new Project({ useInMemoryFileSystem: true });

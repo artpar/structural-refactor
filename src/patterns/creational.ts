@@ -84,8 +84,10 @@ function detectFactories(units: CodeUnitRecord[], filePaths: Map<string, string>
     // PRIMARY SIGNAL: return type is a project-defined class/interface/type
     const returnsProjectType = returnTypeIsProjectType(unit.returnType, units);
 
-    // Without at least one structural signal, skip entirely
-    if (!hasNewExpr && !returnsProjectType) continue;
+    // Require BOTH signals: creates objects AND returns a project class
+    // NewExpression alone could be new Map()/new Set() — not a factory
+    // Return type alone could be a data builder — not a factory
+    if (!hasNewExpr || !returnsProjectType) continue;
 
     const evidence: string[] = [];
     let confidence = 0;

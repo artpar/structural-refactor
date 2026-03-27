@@ -25,6 +25,9 @@ function detectFacades(
 
   // Facade: file with many imports but few exports (simplifying interface)
   for (const scan of scanResults) {
+    // Exclude CLI command files — they're wiring, not architectural facades
+    if (scan.filePath.includes('/cli/commands/')) continue;
+
     const internalImports = scan.imports.filter((i) => !i.isExternal).length;
     const exportCount = scan.exports.length;
 

@@ -6,12 +6,7 @@ import {
   type ReferenceContext,
 } from '../../src/analysis/references.js';
 import { createLogger } from '../../src/core/logger.js';
-import { makeProject } from "../helpers/index.js";
-
-function makeLogger() {
-  return createLogger({ level: 'trace', sink: () => {} });
-}
-
+import { makeProject, makeSimpleLogger } from "../helpers/index.js";
 describe('findAllReferences', () => {
   describe('JSX expression bindings', () => {
     it('finds variable references in JSX expression containers', () => {
@@ -21,7 +16,7 @@ describe('findAllReferences', () => {
 }`;
       const project = makeProject({ '/src/app.tsx': code });
 
-      const refs = findAllReferences(project, '/src/app.tsx', 'title', makeLogger());
+      const refs = findAllReferences(project, '/src/app.tsx', 'title', makeSimpleLogger());
 
       expect(refs.length).toBeGreaterThanOrEqual(2); // definition + JSX usage
       const jsxRef = refs.find((r) => r.context === 'jsx-expression');
@@ -35,7 +30,7 @@ describe('findAllReferences', () => {
 }`;
       const project = makeProject({ '/src/app.tsx': code });
 
-      const refs = findAllReferences(project, '/src/app.tsx', 'handleClick', makeLogger());
+      const refs = findAllReferences(project, '/src/app.tsx', 'handleClick', makeSimpleLogger());
 
       expect(refs.length).toBeGreaterThanOrEqual(2);
       const attrRef = refs.find((r) => r.context === 'jsx-attribute');
@@ -49,7 +44,7 @@ function App() {
 }`;
       const project = makeProject({ '/src/app.tsx': code });
 
-      const refs = findAllReferences(project, '/src/app.tsx', 'Header', makeLogger());
+      const refs = findAllReferences(project, '/src/app.tsx', 'Header', makeSimpleLogger());
 
       expect(refs.length).toBeGreaterThanOrEqual(2); // definition + JSX element
       const jsxRef = refs.find((r) => r.context === 'jsx-element');
@@ -62,7 +57,7 @@ function App() {
       const code = 'const userName = "world";\nconst msg = `hello ${userName}`;\n';
       const project = makeProject({ '/src/app.ts': code });
 
-      const refs = findAllReferences(project, '/src/app.ts', 'userName', makeLogger());
+      const refs = findAllReferences(project, '/src/app.ts', 'userName', makeSimpleLogger());
 
       expect(refs.length).toBeGreaterThanOrEqual(2);
       const templateRef = refs.find((r) => r.context === 'template-expression');
@@ -77,7 +72,7 @@ function App() {
 class Service {}`;
       const project = makeProject({ '/src/app.ts': code });
 
-      const refs = findAllReferences(project, '/src/app.ts', 'Injectable', makeLogger());
+      const refs = findAllReferences(project, '/src/app.ts', 'Injectable', makeSimpleLogger());
 
       expect(refs.length).toBeGreaterThanOrEqual(2); // definition + decorator usage
       const decoratorRef = refs.find((r) => r.context === 'decorator');
@@ -90,7 +85,7 @@ class Service {}`;
       const code = 'interface User { name: string; }\nconst u: User = { name: "a" };\n';
       const project = makeProject({ '/src/app.ts': code });
 
-      const refs = findAllReferences(project, '/src/app.ts', 'User', makeLogger());
+      const refs = findAllReferences(project, '/src/app.ts', 'User', makeSimpleLogger());
 
       expect(refs.length).toBeGreaterThanOrEqual(2);
       const typeRef = refs.find((r) => r.context === 'type-annotation');
@@ -103,7 +98,7 @@ class Service {}`;
       const code = 'const base = { a: 1 };\nconst extended = { ...base, b: 2 };\n';
       const project = makeProject({ '/src/app.ts': code });
 
-      const refs = findAllReferences(project, '/src/app.ts', 'base', makeLogger());
+      const refs = findAllReferences(project, '/src/app.ts', 'base', makeSimpleLogger());
 
       expect(refs.length).toBeGreaterThanOrEqual(2);
       const spreadRef = refs.find((r) => r.context === 'spread');
@@ -118,7 +113,7 @@ class Service {}`;
         '/src/app.ts': 'import { Config } from "./types";\nconst cfg: Config = { debug: true };\n',
       });
 
-      const refs = findAllReferences(project, '/src/types.ts', 'Config', makeLogger());
+      const refs = findAllReferences(project, '/src/types.ts', 'Config', makeSimpleLogger());
 
       // Should find definition in types.ts and usage in app.ts
       const filesWithRefs = [...new Set(refs.map((r) => r.filePath))];
@@ -128,7 +123,7 @@ class Service {}`;
 
   it('returns empty for nonexistent symbol', () => {
     const project = makeProject({ '/src/app.ts': 'const x = 1;\n' });
-    const refs = findAllReferences(project, '/src/app.ts', 'nope', makeLogger());
+    const refs = findAllReferences(project, '/src/app.ts', 'nope', makeSimpleLogger());
     expect(refs).toEqual([]);
   });
 

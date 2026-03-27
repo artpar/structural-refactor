@@ -69,14 +69,14 @@ describe('creational detectors', () => {
     });
 
     it('detects factory with conditional construction', () => {
-      const widgetIface = unit({ name: 'Widget', kind: 'interface' });
+      const widgetClass = unit({ name: 'Widget', kind: 'class' });
       const fn = unit({
         name: 'buildWidget', kind: 'function', returnType: 'Widget', complexity: 3,
         nodeTypes: ['NewExpression', 'IfStatement', 'ReturnStatement'],
       });
       paths.set('buildWidget', '/factory.ts');
       paths.set('Widget', '/widget.ts');
-      const patterns = detectCreationalPatterns([fn, widgetIface], paths);
+      const patterns = detectCreationalPatterns([fn, widgetClass], paths);
       const factory = patterns.find((p) => p.pattern === 'factory');
       expect(factory).toBeDefined();
       expect(factory!.confidence).toBeGreaterThanOrEqual(0.8);

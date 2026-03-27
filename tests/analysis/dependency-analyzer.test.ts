@@ -6,22 +6,18 @@ import {
   type ModuleNode,
 } from '../../src/analysis/dependency-analyzer.js';
 import { createLogger } from '../../src/core/logger.js';
+import { makeSimpleLogger } from "../helpers/index.js";
 
 const FIXTURES = path.resolve(import.meta.dirname, '../fixtures');
-
-function makeLogger() {
-  return createLogger({ level: 'trace', sink: () => {} });
-}
-
 describe('analyzeDependencies', () => {
   describe('simple project', () => {
     it('builds a dependency graph', () => {
-      const graph = analyzeDependencies(path.join(FIXTURES, 'simple-project'), makeLogger());
+      const graph = analyzeDependencies(path.join(FIXTURES, 'simple-project'), makeSimpleLogger());
       expect(graph.modules.size).toBeGreaterThanOrEqual(4);
     });
 
     it('tracks internal imports between files', () => {
-      const graph = analyzeDependencies(path.join(FIXTURES, 'simple-project'), makeLogger());
+      const graph = analyzeDependencies(path.join(FIXTURES, 'simple-project'), makeSimpleLogger());
 
       // Find the app.ts module
       const appModule = findModule(graph, 'app.ts');
@@ -30,7 +26,7 @@ describe('analyzeDependencies', () => {
     });
 
     it('identifies what each file exports', () => {
-      const graph = analyzeDependencies(path.join(FIXTURES, 'simple-project'), makeLogger());
+      const graph = analyzeDependencies(path.join(FIXTURES, 'simple-project'), makeSimpleLogger());
 
       const mathModule = findModule(graph, 'math.ts');
       expect(mathModule).toBeDefined();
@@ -40,7 +36,7 @@ describe('analyzeDependencies', () => {
     });
 
     it('identifies what each file imports', () => {
-      const graph = analyzeDependencies(path.join(FIXTURES, 'simple-project'), makeLogger());
+      const graph = analyzeDependencies(path.join(FIXTURES, 'simple-project'), makeSimpleLogger());
 
       const utilsModule = findModule(graph, 'utils.ts');
       expect(utilsModule).toBeDefined();
@@ -48,13 +44,13 @@ describe('analyzeDependencies', () => {
     });
 
     it('detects files with no dependents (entry points)', () => {
-      const graph = analyzeDependencies(path.join(FIXTURES, 'simple-project'), makeLogger());
+      const graph = analyzeDependencies(path.join(FIXTURES, 'simple-project'), makeSimpleLogger());
       const entryPoints = graph.entryPoints;
       expect(entryPoints.length).toBeGreaterThanOrEqual(1);
     });
 
     it('detects files with no dependencies (leaves)', () => {
-      const graph = analyzeDependencies(path.join(FIXTURES, 'simple-project'), makeLogger());
+      const graph = analyzeDependencies(path.join(FIXTURES, 'simple-project'), makeSimpleLogger());
       const leaves = graph.leaves;
       expect(leaves.length).toBeGreaterThanOrEqual(1);
       // math.ts has no imports — it's a leaf
@@ -64,20 +60,20 @@ describe('analyzeDependencies', () => {
 
   describe('react project', () => {
     it('parses JSX/TSX files', () => {
-      const graph = analyzeDependencies(path.join(FIXTURES, 'react-project'), makeLogger());
+      const graph = analyzeDependencies(path.join(FIXTURES, 'react-project'), makeSimpleLogger());
       const appModule = findModule(graph, 'App.tsx');
       expect(appModule).toBeDefined();
     });
 
     it('tracks external dependencies (react, etc.)', () => {
-      const graph = analyzeDependencies(path.join(FIXTURES, 'react-project'), makeLogger());
+      const graph = analyzeDependencies(path.join(FIXTURES, 'react-project'), makeSimpleLogger());
       const appModule = findModule(graph, 'App.tsx');
       expect(appModule).toBeDefined();
       expect(appModule!.externalImports.some((i) => i.source === 'react')).toBe(true);
     });
 
     it('resolves path aliases in imports', () => {
-      const graph = analyzeDependencies(path.join(FIXTURES, 'react-project'), makeLogger());
+      const graph = analyzeDependencies(path.join(FIXTURES, 'react-project'), makeSimpleLogger());
       const appModule = findModule(graph, 'App.tsx');
       expect(appModule).toBeDefined();
       // @components/Header should resolve to an internal import
@@ -87,17 +83,17 @@ describe('analyzeDependencies', () => {
 
   describe('graph stats', () => {
     it('provides module count', () => {
-      const graph = analyzeDependencies(path.join(FIXTURES, 'simple-project'), makeLogger());
+      const graph = analyzeDependencies(path.join(FIXTURES, 'simple-project'), makeSimpleLogger());
       expect(graph.stats.moduleCount).toBeGreaterThanOrEqual(4);
     });
 
     it('provides external dependency count', () => {
-      const graph = analyzeDependencies(path.join(FIXTURES, 'react-project'), makeLogger());
+      const graph = analyzeDependencies(path.join(FIXTURES, 'react-project'), makeSimpleLogger());
       expect(graph.stats.externalDependencyCount).toBeGreaterThanOrEqual(1);
     });
 
     it('provides internal edge count', () => {
-      const graph = analyzeDependencies(path.join(FIXTURES, 'simple-project'), makeLogger());
+      const graph = analyzeDependencies(path.join(FIXTURES, 'simple-project'), makeSimpleLogger());
       expect(graph.stats.internalEdgeCount).toBeGreaterThanOrEqual(3);
     });
   });

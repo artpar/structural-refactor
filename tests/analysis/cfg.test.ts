@@ -7,19 +7,14 @@ import {
   type BlockType,
 } from '../../src/analysis/cfg.js';
 import { createLogger } from '../../src/core/logger.js';
-import { makeProject } from "../helpers/index.js";
-
-function makeLogger() {
-  return createLogger({ level: 'trace', sink: () => {} });
-}
-
+import { makeProject, makeSimpleLogger } from "../helpers/index.js";
 describe('CFG builder', () => {
   describe('simple function', () => {
     it('builds a linear CFG for function with no branches', () => {
       const code = 'function add(a: number, b: number) {\n  const sum = a + b;\n  return sum;\n}\n';
       const project = makeProject({ '/src/app.ts': code });
 
-      const cfg = buildCFG(project, '/src/app.ts', 'add', makeLogger());
+      const cfg = buildCFG(project, '/src/app.ts', 'add', makeSimpleLogger());
 
       expect(cfg).toBeDefined();
       expect(cfg!.functionName).toBe('add');
@@ -41,7 +36,7 @@ describe('CFG builder', () => {
 }`;
       const project = makeProject({ '/src/app.ts': code });
 
-      const cfg = buildCFG(project, '/src/app.ts', 'check', makeLogger());
+      const cfg = buildCFG(project, '/src/app.ts', 'check', makeSimpleLogger());
 
       expect(cfg).toBeDefined();
       // Should have: entry, condition, then-branch, else-branch, exit
@@ -65,7 +60,7 @@ describe('CFG builder', () => {
 }`;
       const project = makeProject({ '/src/app.ts': code });
 
-      const cfg = buildCFG(project, '/src/app.ts', 'total', makeLogger());
+      const cfg = buildCFG(project, '/src/app.ts', 'total', makeSimpleLogger());
 
       expect(cfg).toBeDefined();
       const loopBlocks = cfg!.blocks.filter((b) => b.type === 'loop');
@@ -88,7 +83,7 @@ describe('CFG builder', () => {
 }`;
       const project = makeProject({ '/src/app.ts': code });
 
-      const cfg = buildCFG(project, '/src/app.ts', 'safe', makeLogger());
+      const cfg = buildCFG(project, '/src/app.ts', 'safe', makeSimpleLogger());
 
       expect(cfg).toBeDefined();
       const tryBlocks = cfg!.blocks.filter((b) => b.type === 'try');
@@ -109,7 +104,7 @@ describe('CFG builder', () => {
 }`;
       const project = makeProject({ '/src/app.ts': code });
 
-      const cfg = buildCFG(project, '/src/app.ts', 'route', makeLogger());
+      const cfg = buildCFG(project, '/src/app.ts', 'route', makeSimpleLogger());
 
       expect(cfg).toBeDefined();
       const switchBlocks = cfg!.blocks.filter((b) => b.type === 'switch');
@@ -129,7 +124,7 @@ describe('CFG builder', () => {
 }`;
       const project = makeProject({ '/src/app.ts': code });
 
-      const cfg = buildCFG(project, '/src/app.ts', 'main', makeLogger());
+      const cfg = buildCFG(project, '/src/app.ts', 'main', makeSimpleLogger());
 
       expect(cfg).toBeDefined();
       // Should track calls within the blocks
@@ -140,7 +135,7 @@ describe('CFG builder', () => {
 
   it('returns undefined for nonexistent function', () => {
     const project = makeProject({ '/src/app.ts': 'const x = 1;\n' });
-    const cfg = buildCFG(project, '/src/app.ts', 'nope', makeLogger());
+    const cfg = buildCFG(project, '/src/app.ts', 'nope', makeSimpleLogger());
     expect(cfg).toBeUndefined();
   });
 
