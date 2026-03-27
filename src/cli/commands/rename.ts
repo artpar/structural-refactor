@@ -20,9 +20,9 @@ export function registerRename(program: Command): void {
       const globalOpts = cmd.optsWithGlobals();
       const ctx = createExecutionContext(globalOpts);
 
-      let filePath: string;
-      let line: number;
-      let col: number;
+      let filePath: string = '';
+      let line: number = 1;
+      let col: number = 1;
 
       if (opts.path) {
         // Explicit location provided
@@ -43,27 +43,44 @@ export function registerRename(program: Command): void {
         const matches = engine.find(name);
 
         if (matches.length === 0) {
-          ctx.logger.error('rename', `symbol '${name}' not found in project`, {});
+          process.stderr.write(`Error: symbol '${name}' not found in project\n`);
           process.exitCode = 1;
           return;
         }
 
         if (matches.length > 1) {
-          ctx.logger.error('rename', `multiple symbols named '${name}' found — use --path to disambiguate`, {
-            matches: matches.map((m) => `${path.relative(rootDir, m.filePath)} (${m.exported ? 'exported' : 'local'})`),
-          });
+          process.stderr.write(`Error: multiple symbols named '${name}' found — use --path to disambiguate:\n`);
+          for (const m of matches) {
+            process.stderr.write(`  ${path.relative(rootDir, m.filePath)} (${m.exported ? 'exported' : 'local'})\n`);
+          }
           process.exitCode = 1;
           return;
         }
 
         filePath = matches[0].filePath;
-        line = 1;  // ts-morph will search from line 1 for the identifier
-        col = 1;
+        // Find actual declaration position by loading the file and searching by name
+        const tempProject = createProject(ctx, [filePath]);
+        const sf = tempProject.getSourceFile(path.resolve(filePath));
+        if (sf) {
+          const decl = sf.getFunction(name) ?? sf.getClass(name) ?? sf.getInterface(name) ??
+            sf.getTypeAlias(name) ?? sf.getEnum(name) ?? sf.getVariableDeclaration(name);
+          if (decl) {
+            const nameNode = 'getNameNode' in decl ? (decl as any).getNameNode() : decl;
+            if (nameNode) {
+              line = nameNode.getStartLineNumber();
+              col = nameNode.getStart() - nameNode.getStartLinePos() + 1;
+            }
+          }
+        }
+        if (!line || !col) {
+          line = 1;
+          col = 1;
+        }
       }
 
-      const project = createProject(ctx);
+      const project = createProject(ctx, [filePath]);
       const cs = renameSymbol(project, {
-        filePath,
+        filePath: path.resolve(filePath),
         line,
         col,
         newName: opts.to,

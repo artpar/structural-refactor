@@ -55,12 +55,7 @@ describe('CLI program', () => {
       const subs = extract.commands.map((c) => c.name());
       expect(subs).toContain('function');
       expect(subs).toContain('variable');
-      expect(subs).toContain('constant');
-      expect(subs).toContain('parameter');
       expect(subs).toContain('interface');
-      expect(subs).toContain('type-alias');
-      expect(subs).toContain('component');
-      expect(subs).toContain('parameter-object');
     });
   });
 

@@ -1,4 +1,7 @@
 import type { Command } from 'commander';
+import { createExecutionContext, createProject, handleResult } from '../execute.js';
+import { cjsToEsm } from '../../operations/module/cjs-to-esm.js';
+import { defaultToNamed } from '../../operations/module/default-to-named.js';
 
 export function registerModule(program: Command): void {
   const mod = program
@@ -8,31 +11,24 @@ export function registerModule(program: Command): void {
   mod
     .command('cjs-to-esm')
     .description('Convert CommonJS requires to ESM imports')
-    .option('--scope <path>', 'Limit to directory')
-    .action(() => {});
-
-  mod
-    .command('esm-to-cjs')
-    .description('Convert ESM imports to CommonJS requires')
-    .option('--scope <path>', 'Limit to directory')
-    .action(() => {});
+    .option('--path <file>', 'Single file (or omit for all)')
+    .action((opts, cmd) => {
+      const globalOpts = cmd.optsWithGlobals();
+      const ctx = createExecutionContext(globalOpts);
+      const project = createProject(ctx, opts.path ? [opts.path] : undefined);
+      const cs = cjsToEsm(project, { filePath: opts.path ?? '', logger: ctx.logger });
+      handleResult(ctx, cs);
+    });
 
   mod
     .command('default-to-named')
     .description('Convert default export to named export')
     .requiredOption('--path <file>', 'File to refactor')
-    .action(() => {});
-
-  mod
-    .command('named-to-default')
-    .description('Convert named export to default export')
-    .requiredOption('--path <file>', 'File to refactor')
-    .requiredOption('--export <name>', 'Name of the export')
-    .action(() => {});
-
-  mod
-    .command('barrel')
-    .description('Generate or update barrel file (index.ts)')
-    .requiredOption('--path <dir>', 'Directory to barrel')
-    .action(() => {});
+    .action((opts, cmd) => {
+      const globalOpts = cmd.optsWithGlobals();
+      const ctx = createExecutionContext(globalOpts);
+      const project = createProject(ctx, [opts.path]);
+      const cs = defaultToNamed(project, { filePath: opts.path, logger: ctx.logger });
+      handleResult(ctx, cs);
+    });
 }

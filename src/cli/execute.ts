@@ -47,18 +47,18 @@ export function createProject(ctx: ExecutionContext, filePaths?: string[]): Proj
     fileCount: filePaths?.length,
   });
 
-  if (hasTsConfig && !filePaths) {
-    return new Project({ tsConfigFilePath: tsconfigPath });
-  }
+  const project = hasTsConfig
+    ? new Project({ tsConfigFilePath: tsconfigPath })
+    : new Project({ skipAddingFilesFromTsConfig: true });
 
-  const project = new Project({
-    tsConfigFilePath: hasTsConfig ? tsconfigPath : undefined,
-    skipAddingFilesFromTsConfig: true,
-  });
-
+  // Ensure explicitly requested files are in the project
+  // (they may be outside tsconfig include paths)
   if (filePaths) {
     for (const fp of filePaths) {
-      project.addSourceFileAtPath(fp);
+      const abs = path.resolve(fp);
+      if (!project.getSourceFile(abs) && fs.existsSync(abs)) {
+        project.addSourceFileAtPath(abs);
+      }
     }
   }
 
@@ -66,8 +66,15 @@ export function createProject(ctx: ExecutionContext, filePaths?: string[]): Proj
 }
 
 export function handleResult(ctx: ExecutionContext, cs: ChangeSet): void {
+  // Detect precondition failures — report them as errors, not silent no-ops
+  if (cs.description.startsWith('Precondition failed:')) {
+    process.stderr.write(`Error: ${cs.description}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
   if (cs.files.length === 0) {
-    ctx.logger.info('execute', 'no changes to apply', { description: cs.description });
+    process.stderr.write(`No changes: ${cs.description}\n`);
     return;
   }
 

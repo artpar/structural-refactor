@@ -3,6 +3,7 @@ import path from 'node:path';
 import { parseSync } from 'oxc-parser';
 import type { Logger } from '../core/logger.js';
 import { discoverFiles } from '../indexing/file-index.js';
+import { walkAst } from '../utils/ast-walk.js';
 
 export type CodeUnitKind = 'function' | 'class' | 'interface' | 'type' | 'enum' | 'variable' | 'arrow';
 
@@ -566,16 +567,4 @@ function getLine(sourceText: string, pos: number): number {
   return line;
 }
 
-function walkAst(node: any, visitor: (node: any) => void): void {
-  if (!node || typeof node !== 'object') return;
-  if (node.type) visitor(node);
-  for (const key of Object.keys(node)) {
-    if (key === 'type' || key === 'start' || key === 'end') continue;
-    const child = node[key];
-    if (Array.isArray(child)) {
-      for (const item of child) walkAst(item, visitor);
-    } else if (child && typeof child === 'object' && child.type) {
-      walkAst(child, visitor);
-    }
-  }
-}
+// walkAst imported from src/utils/ast-walk.ts — single source of truth
