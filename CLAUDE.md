@@ -83,6 +83,45 @@ function buildIndex(logger: Logger, files: string[]) {
 - Scope parameter identifies the module (e.g., `'indexing'`, `'cache'`, `'rename'`, `'cli'`)
 - Never use `console.log` — use the logger
 
+## Dogfooding: Use sref to edit this project
+
+**ALL code changes to this project MUST be made using the sref CLI itself.** This is non-negotiable. The tool must be able to refactor itself — if it can't, that's a bug to fix, not a reason to fall back to string manipulation.
+
+### How to make changes
+
+```bash
+# Discover what needs changing
+npx tsx bin/sref.ts discover find <name> --dir .
+npx tsx bin/sref.ts discover similar <name> --dir .
+npx tsx bin/sref.ts patterns detect --dir .
+npx tsx bin/sref.ts analyze deps --dir .
+
+# Rename a symbol across the project
+npx tsx bin/sref.ts rename symbol <old> --to <new> --dry-run
+npx tsx bin/sref.ts rename symbol <old> --to <new>
+
+# Delete unreferenced code
+npx tsx bin/sref.ts type safe-delete <name> --path <file> --dry-run
+npx tsx bin/sref.ts type safe-delete <name> --path <file>
+
+# Inline, extract, convert
+npx tsx bin/sref.ts inline variable --path <file:line:col>
+npx tsx bin/sref.ts extract function --path <file> --start <l:c> --end <l:c> --name <n>
+npx tsx bin/sref.ts type convert --path <file:line:col>
+npx tsx bin/sref.ts signature to-arrow --path <file:line:col>
+
+# Always verify after changes
+pnpm build && pnpm vitest run
+```
+
+### When sref can't do it
+
+If an sref operation crashes, fails silently, or produces wrong output — **that is a bug in sref**. Fix the bug first, then use sref to make the original change. Do NOT fall back to manual string editing / Edit tool / sed / grep. The only exception is editing sref's own CLI wiring code (src/cli/commands/*) when the tool literally cannot invoke itself.
+
+### Why
+
+The tool's reliability is proven by whether it can maintain its own codebase. Every time we bypass it to use string manipulation, we hide bugs and miss the feedback loop that makes the tool production-grade.
+
 ## Rules
 
 - Never run linting or type checking commands
@@ -93,3 +132,4 @@ function buildIndex(logger: Logger, files: string[]) {
 - Operations are flat (no inheritance hierarchy) — shared logic in `utils/`
 - All code analysis is AST-based — no string matching or regex on source code
 - TDD: write tests first, then implement
+- **Use sref to edit this project** — dogfooding is mandatory
