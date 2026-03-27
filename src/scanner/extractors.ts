@@ -193,15 +193,47 @@ function buildFunctionUnit(
 function buildClassUnit(node: any, sourceText: string, exportedNames: Set<string>): CodeUnitRecord {
   const name = node.id.name;
   const members: MemberRecord[] = [];
+  let constructorParams: ParamRecord[] = [];
+
+  // Extract extends clause
+  const extendsName = node.superClass?.name as string | undefined;
+
+  // Extract implements clause
+  const implementsNames: string[] = [];
+  if (node.implements) {
+    for (const impl of node.implements) {
+      const implName = impl.expression?.name ?? impl.typeName?.name;
+      if (implName) implementsNames.push(implName);
+    }
+  }
+
+  // Extract decorators on the class
+  const classDecorators = extractDecorators(node.decorators, sourceText);
 
   if (node.body?.body) {
     for (const member of node.body.body) {
       if (member.type === 'MethodDefinition' && member.key?.name) {
+        const visibility = extractVisibility(member);
+        const memberDecorators = extractDecorators(member.decorators, sourceText);
+
         members.push({
           name: member.key.name,
           kind: member.kind === 'get' ? 'getter' : member.kind === 'set' ? 'setter' : 'method',
           isAsync: member.value?.async ?? false,
           paramCount: member.value?.params?.length ?? 0,
+          visibility,
+          isStatic: member.static ?? false,
+          decorators: memberDecorators.length > 0 ? memberDecorators : undefined,
+        });
+      }
+      if (member.type === 'MethodDefinition' && member.kind === 'constructor') {
+        // Extract constructor parameters
+        constructorParams = extractParams(member.value?.params ?? [], sourceText);
+        members.push({
+          name: 'constructor',
+          kind: 'constructor',
+          paramCount: constructorParams.length,
+          visibility: extractVisibility(member),
         });
       }
       if (member.type === 'PropertyDefinition' && member.key?.name) {
@@ -211,6 +243,9 @@ function buildClassUnit(node: any, sourceText: string, exportedNames: Set<string
           type: member.typeAnnotation?.typeAnnotation
             ? sourceText.slice(member.typeAnnotation.typeAnnotation.start, member.typeAnnotation.typeAnnotation.end)
             : undefined,
+          visibility: extractVisibility(member),
+          isStatic: member.static ?? false,
+          decorators: extractDecorators(member.decorators, sourceText),
         });
       }
     }
@@ -232,12 +267,37 @@ function buildClassUnit(node: any, sourceText: string, exportedNames: Set<string
     line: getLine(sourceText, node.start),
     exported: exportedNames.has(name),
     isAsync: false,
+    extends: extendsName,
+    implements: implementsNames.length > 0 ? implementsNames : undefined,
+    decorators: classDecorators.length > 0 ? classDecorators : undefined,
+    constructorParams: constructorParams.length > 0 ? constructorParams : undefined,
     params: [], returnType: '',
     members, typeTokens, nodeTypes,
     statementTypes: [],
     bodyLineCount: countLines(sourceText, node.start, node.end),
     complexity: 0,
   };
+}
+
+function extractDecorators(decorators: any[] | undefined, sourceText: string): import('./types.js').DecoratorRecord[] {
+  if (!decorators) return [];
+  return decorators.map((d: any) => {
+    const expr = d.expression;
+    if (expr?.type === 'CallExpression') {
+      return {
+        name: expr.callee?.name ?? sourceText.slice(expr.callee?.start, expr.callee?.end) ?? '',
+        args: expr.arguments?.map((a: any) => sourceText.slice(a.start, a.end)) ?? [],
+      };
+    }
+    return { name: expr?.name ?? '' };
+  }).filter((d: any) => d.name);
+}
+
+function extractVisibility(member: any): 'public' | 'private' | 'protected' | undefined {
+  if (member.accessibility === 'private') return 'private';
+  if (member.accessibility === 'protected') return 'protected';
+  if (member.accessibility === 'public') return 'public';
+  return undefined;
 }
 
 function buildInterfaceUnit(node: any, sourceText: string, exportedNames: Set<string>): CodeUnitRecord {
@@ -314,12 +374,16 @@ export function extractCalls(program: any): CallRecord[] {
 
 function extractParams(params: any[], sourceText: string): ParamRecord[] {
   if (!params) return [];
-  return params.map((p: any) => ({
-    name: p.name ?? p.argument?.name ?? p.left?.name ?? '?',
-    type: p.typeAnnotation?.typeAnnotation
-      ? sourceText.slice(p.typeAnnotation.typeAnnotation.start, p.typeAnnotation.typeAnnotation.end)
-      : (p.typeAnnotation?.typeAnnotation?.type?.replace('TS', '').replace('Keyword', '').toLowerCase() ?? 'unknown'),
-  }));
+  return params.map((p: any) => {
+    // TSParameterProperty wraps the actual parameter (e.g., `private db: Database`)
+    const actual = p.type === 'TSParameterProperty' ? p.parameter : p;
+    return {
+      name: actual.name ?? actual.argument?.name ?? actual.left?.name ?? '?',
+      type: actual.typeAnnotation?.typeAnnotation
+        ? sourceText.slice(actual.typeAnnotation.typeAnnotation.start, actual.typeAnnotation.typeAnnotation.end)
+        : (actual.typeAnnotation?.typeAnnotation?.type?.replace('TS', '').replace('Keyword', '').toLowerCase() ?? 'unknown'),
+    };
+  });
 }
 
 function classifyStatement(stmt: any): StatementType {

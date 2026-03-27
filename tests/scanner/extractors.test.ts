@@ -137,6 +137,62 @@ describe('extractors', () => {
     });
   });
 
+  describe('class hierarchy extraction', () => {
+    it('extracts extends clause', () => {
+      const code = 'class Animal { speak() {} }\nclass Dog extends Animal { bark() {} }';
+      const result = parse(code);
+      const units = extractCodeUnits(result.program, code);
+      const dog = units.find((u) => u.name === 'Dog');
+      expect(dog).toBeDefined();
+      expect(dog!.extends).toBe('Animal');
+    });
+
+    it('extracts implements clause', () => {
+      const code = 'interface Serializable { serialize(): string; }\nclass User implements Serializable { serialize() { return ""; } }';
+      const result = parse(code);
+      const units = extractCodeUnits(result.program, code);
+      const user = units.find((u) => u.name === 'User');
+      expect(user).toBeDefined();
+      expect(user!.implements).toContain('Serializable');
+    });
+
+    it('extracts decorators on classes', () => {
+      const code = 'function Component(opts: any) { return (t: any) => t; }\n@Component({ selector: "app" })\nclass AppComponent {}';
+      const result = parse(code);
+      const units = extractCodeUnits(result.program, code);
+      const app = units.find((u) => u.name === 'AppComponent');
+      expect(app).toBeDefined();
+      expect(app!.decorators).toBeDefined();
+      expect(app!.decorators!.length).toBeGreaterThanOrEqual(1);
+      expect(app!.decorators![0].name).toBe('Component');
+    });
+
+    it('extracts constructor params', () => {
+      const code = 'class Service { constructor(private db: Database, public logger: Logger) {} }';
+      const result = parse(code);
+      const units = extractCodeUnits(result.program, code);
+      const svc = units.find((u) => u.name === 'Service');
+      expect(svc).toBeDefined();
+      expect(svc!.constructorParams).toBeDefined();
+      expect(svc!.constructorParams!.length).toBe(2);
+      expect(svc!.constructorParams![0].name).toBe('db');
+    });
+
+    it('extracts member visibility and static', () => {
+      const code = 'class Foo { private secret = 1; public name = ""; static count = 0; greet() {} }';
+      const result = parse(code);
+      const units = extractCodeUnits(result.program, code);
+      const foo = units.find((u) => u.name === 'Foo');
+      expect(foo).toBeDefined();
+      const secret = foo!.members.find((m) => m.name === 'secret');
+      expect(secret?.visibility).toBe('private');
+      const name = foo!.members.find((m) => m.name === 'name');
+      expect(name?.visibility).toBe('public');
+      const count = foo!.members.find((m) => m.name === 'count');
+      expect(count?.isStatic).toBe(true);
+    });
+  });
+
   describe('extractAll', () => {
     it('extracts everything in one pass', () => {
       const code = 'import { x } from "./mod";\nexport function add(a: number, b: number) { return x(a + b); }\n';

@@ -11,6 +11,7 @@ import { registerQuality } from './commands/quality.js';
 import { registerClass } from './commands/class.js';
 import { registerAnalyze } from './commands/analyze.js';
 import { registerDiscover } from './commands/discover.js';
+import { registerPatterns } from './commands/patterns.js';
 
 export function createProgram(): Command {
   const program = new Command();
@@ -38,6 +39,7 @@ export function createProgram(): Command {
   registerClass(program);
   registerAnalyze(program);
   registerDiscover(program);
+  registerPatterns(program);
 
   return program;
 }

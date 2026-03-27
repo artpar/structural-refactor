@@ -21,12 +21,20 @@ export interface ParamRecord {
   type: string;
 }
 
+export interface DecoratorRecord {
+  name: string;
+  args?: string[];
+}
+
 export interface MemberRecord {
   name: string;
-  kind: 'property' | 'method' | 'getter' | 'setter';
+  kind: 'property' | 'method' | 'getter' | 'setter' | 'constructor';
   type?: string;
   isAsync?: boolean;
   paramCount?: number;
+  visibility?: 'public' | 'private' | 'protected';
+  isStatic?: boolean;
+  decorators?: DecoratorRecord[];
 }
 
 export interface CodeUnitRecord {
@@ -38,6 +46,14 @@ export interface CodeUnitRecord {
   params: ParamRecord[];
   returnType: string;
   members: MemberRecord[];
+  /** Parent class name */
+  extends?: string;
+  /** Implemented interface names */
+  implements?: string[];
+  /** Decorators on the declaration */
+  decorators?: DecoratorRecord[];
+  /** Constructor parameters (for DI detection) */
+  constructorParams?: ParamRecord[];
   /** Raw token list (type tokens, not names — for Type II clone invariance) */
   typeTokens: string[];
   /** AST node types in post-order (for Merkle hashing) */
