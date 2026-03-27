@@ -27,7 +27,14 @@ export function renameSymbol(project: Project, args: RenameSymbolArgs): ChangeSe
   }
 
   // Find the identifier at the given position using AST
-  const pos = sourceFile.compilerNode.getPositionOfLineAndCharacter(line - 1, col - 1);
+  let pos: number;
+  try {
+    pos = sourceFile.compilerNode.getPositionOfLineAndCharacter(line - 1, col - 1);
+  } catch {
+    logger.warn('rename-symbol', 'position out of range', { filePath, line, col,
+      maxLine: sourceFile.getEndLineNumber() });
+    return createChangeSet(`Rename failed: line ${line} col ${col} is out of range in ${filePath}`, []);
+  }
   const node = sourceFile.getDescendantAtPos(pos);
 
   if (!node || !Node.isIdentifier(node)) {
