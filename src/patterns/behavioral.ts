@@ -56,28 +56,44 @@ function detectMiddleware(units: CodeUnitRecord[], filePaths: Map<string, string
   for (const unit of units) {
     if (unit.kind !== 'function' && unit.kind !== 'arrow') continue;
 
-    const paramNames = unit.params.map((p) => p.name);
+    const params = unit.params;
+    const paramNames = params.map((p) => p.name);
+    const paramTypes = params.map((p) => p.type.toLowerCase());
     const evidence: string[] = [];
     let confidence = 0;
 
-    // Express-style: (req, res, next) or (request, response, next)
-    if (paramNames.length === 3) {
+    // PRIMARY: Type-based detection — last param type contains Next/NextFunction
+    const lastParamType = params.length > 0 ? params[params.length - 1].type : '';
+    const hasNextType = /next|NextFunction/i.test(lastParamType);
+
+    if (hasNextType && params.length >= 2) {
+      evidence.push(`last parameter type is '${lastParamType}' (next function)`);
+      confidence += 0.7;
+
+      // Type-based Request/Response check (stronger than name-based)
+      if (paramTypes.some((t) => /request|req/i.test(t))) {
+        evidence.push('has Request-typed parameter');
+        confidence += 0.1;
+      }
+    }
+
+    // SECONDARY: Name-based (weaker signal, requires type backup or strong name match)
+    if (confidence === 0 && paramNames.length === 3) {
       const hasReq = paramNames.some((n) => n === 'req' || n === 'request');
       const hasRes = paramNames.some((n) => n === 'res' || n === 'response');
       const hasNext = paramNames.some((n) => n === 'next');
       if (hasReq && hasRes && hasNext) {
         evidence.push('Express-style middleware signature (req, res, next)');
-        confidence += 0.85;
+        confidence += 0.75;
       }
     }
 
-    // Koa-style: (ctx, next)
-    if (paramNames.length === 2) {
+    if (confidence === 0 && paramNames.length === 2) {
       const hasCtx = paramNames.some((n) => n === 'ctx' || n === 'context');
       const hasNext = paramNames.some((n) => n === 'next');
       if (hasCtx && hasNext) {
         evidence.push('Koa-style middleware signature (ctx, next)');
-        confidence += 0.8;
+        confidence += 0.7;
       }
     }
 

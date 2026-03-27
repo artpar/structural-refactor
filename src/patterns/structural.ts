@@ -27,7 +27,11 @@ function detectFacades(
     const internalImports = scan.imports.filter((i) => !i.isExternal).length;
     const exportCount = scan.exports.length;
 
-    if (internalImports >= 3 && exportCount > 0 && exportCount <= internalImports / 2) {
+    // Exclude pure re-export barrels (that's barrel-module, not facade)
+    const reExportCount = scan.exports.filter((e) => e.isReExport).length;
+    const isBarrel = reExportCount > exportCount * 0.7;
+
+    if (internalImports >= 4 && exportCount > 0 && exportCount <= internalImports / 3 && !isBarrel) {
       // Find the units in this file
       const fileUnits = units.filter((u) => filePaths.get(u.name) === scan.filePath);
 

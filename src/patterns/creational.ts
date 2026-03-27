@@ -1,5 +1,21 @@
+/**
+ * Creational pattern detectors.
+ * Based on GEML structural operators (arxiv:2401.07042):
+ * - Factory: requires createObj (NewExpression) + project-type return
+ * - Singleton: requires private constructor + static self-typed field
+ * - Builder: requires fluent setters + build method
+ *
+ * Names are weak signals (0.1 max), NOT primary indicators.
+ */
 import type { CodeUnitRecord } from '../scanner/types.js';
 import type { DetectedPattern, PatternLocation } from './types.js';
+import {
+  containsNewExpression,
+  returnTypeIsProjectType,
+  isExcludedReturnType,
+  isReactHook,
+  isTestFile,
+} from './helpers.js';
 
 export function detectCreationalPatterns(units: CodeUnitRecord[], filePaths: Map<string, string>): DetectedPattern[] {
   const patterns: DetectedPattern[] = [];
@@ -27,23 +43,23 @@ function detectSingletons(units: CodeUnitRecord[], filePaths: Map<string, string
       (m) => m.isStatic && m.kind === 'method' && (m.name === 'getInstance' || m.name === 'instance'),
     );
 
-    const evidence: string[] = [];
-    let confidence = 0;
+    // Require private constructor as mandatory structural signal
+    if (!hasPrivateConstructor) continue;
 
-    if (hasPrivateConstructor) { evidence.push('private constructor'); confidence += 0.35; }
+    const evidence: string[] = ['private constructor'];
+    let confidence = 0.4;
+
     if (hasStaticInstance) { evidence.push('static instance field'); confidence += 0.3; }
-    if (hasGetInstance) { evidence.push('static getInstance method'); confidence += 0.3; }
+    if (hasGetInstance) { evidence.push('static getInstance method'); confidence += 0.25; }
 
-    if (confidence >= 0.3) {
-      patterns.push({
-        pattern: 'singleton',
-        category: 'creational',
-        confidence: Math.min(confidence, 1.0),
-        locations: [loc(unit, filePaths)],
-        evidence,
-        relatedUnits: [unit.name],
-      });
-    }
+    patterns.push({
+      pattern: 'singleton',
+      category: 'creational',
+      confidence: Math.min(confidence, 1.0),
+      locations: [loc(unit, filePaths)],
+      evidence,
+      relatedUnits: [unit.name],
+    });
   }
 
   return patterns;
@@ -51,30 +67,55 @@ function detectSingletons(units: CodeUnitRecord[], filePaths: Map<string, string
 
 function detectFactories(units: CodeUnitRecord[], filePaths: Map<string, string>): DetectedPattern[] {
   const patterns: DetectedPattern[] = [];
-  const factoryPattern = /^(create|make|build|from|of|new)[A-Z]/;
+  const factoryNamePattern = /^(create|make|build|from|of)[A-Z]/;
 
   for (const unit of units) {
     if (unit.kind !== 'function' && unit.kind !== 'arrow') continue;
 
+    const fp = filePaths.get(unit.name) ?? '';
+
+    // Hard exclusions — these are never factories
+    if (isTestFile(fp)) continue;
+    if (isReactHook(unit.name)) continue;
+    if (isExcludedReturnType(unit.returnType)) continue;
+
+    // PRIMARY SIGNAL: structural — body contains NewExpression (createObj operator)
+    const hasNewExpr = containsNewExpression(unit);
+
+    // PRIMARY SIGNAL: return type is a project-defined class/interface/type
+    const returnsProjectType = returnTypeIsProjectType(unit.returnType, units);
+
+    // Without at least one structural signal, skip entirely
+    if (!hasNewExpr && !returnsProjectType) continue;
+
     const evidence: string[] = [];
     let confidence = 0;
 
-    if (factoryPattern.test(unit.name)) {
-      evidence.push(`name matches factory pattern: ${unit.name}`);
-      confidence += 0.5;
+    // Structural signals (primary — high weight)
+    if (hasNewExpr) {
+      evidence.push('creates object instances (NewExpression in body)');
+      confidence += 0.4;
     }
 
-    if (unit.returnType && !['void', 'string', 'number', 'boolean', 'undefined'].includes(unit.returnType)) {
-      evidence.push(`returns object type: ${unit.returnType}`);
+    if (returnsProjectType) {
+      evidence.push(`returns project type: ${unit.returnType}`);
       confidence += 0.3;
     }
 
-    if (unit.complexity >= 2 && unit.returnType) {
+    // Behavioral signal: conditional construction (multiple paths)
+    if (unit.complexity >= 2 && hasNewExpr) {
       evidence.push('conditional construction logic');
-      confidence += 0.2;
+      confidence += 0.15;
     }
 
-    if (confidence >= 0.5) {
+    // Name is a WEAK signal — only a small boost
+    if (factoryNamePattern.test(unit.name)) {
+      evidence.push(`name matches factory pattern: ${unit.name}`);
+      confidence += 0.1;
+    }
+
+    // Minimum threshold: need at least one strong structural signal
+    if (confidence >= 0.4) {
       patterns.push({
         pattern: 'factory',
         category: 'creational',
@@ -95,7 +136,6 @@ function detectBuilders(units: CodeUnitRecord[], filePaths: Map<string, string>)
   for (const unit of units) {
     if (unit.kind !== 'class') continue;
 
-    // Builder pattern: class with methods returning `this` or the class type, + a build() method
     const chainMethods = unit.members.filter(
       (m) => m.kind === 'method' && m.name !== 'constructor',
     );

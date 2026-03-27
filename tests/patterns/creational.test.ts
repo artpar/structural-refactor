@@ -31,7 +31,7 @@ describe('creational detectors', () => {
       expect(singleton!.confidence).toBeGreaterThanOrEqual(0.9);
     });
 
-    it('detects partial singleton (static instance only)', () => {
+    it('rejects class without private constructor (no partial singleton)', () => {
       const cls = unit({
         name: 'Config', kind: 'class',
         members: [
@@ -40,9 +40,8 @@ describe('creational detectors', () => {
       });
       paths.set('Config', '/config.ts');
       const patterns = detectCreationalPatterns([cls], paths);
-      const singleton = patterns.find((p) => p.pattern === 'singleton');
-      expect(singleton).toBeDefined();
-      expect(singleton!.confidence).toBeLessThan(0.5);
+      // Private constructor is mandatory — static field alone is not enough
+      expect(patterns.find((p) => p.pattern === 'singleton')).toBeUndefined();
     });
 
     it('does not flag non-singleton class', () => {
@@ -54,27 +53,91 @@ describe('creational detectors', () => {
   });
 
   describe('factory', () => {
-    it('detects create* function returning object type', () => {
-      const fn = unit({ name: 'createUser', kind: 'function', returnType: 'User', complexity: 0 });
+    it('detects factory with NewExpression returning project type', () => {
+      // Factory must have: NewExpression in body + return type matching a project class
+      const userClass = unit({ name: 'User', kind: 'class' });
+      const fn = unit({
+        name: 'createUser', kind: 'function', returnType: 'User',
+        nodeTypes: ['NewExpression', 'ReturnStatement'],
+      });
       paths.set('createUser', '/factory.ts');
-      const patterns = detectCreationalPatterns([fn], paths);
+      paths.set('User', '/user.ts');
+      const patterns = detectCreationalPatterns([fn, userClass], paths);
       const factory = patterns.find((p) => p.pattern === 'factory');
       expect(factory).toBeDefined();
+      expect(factory!.confidence).toBeGreaterThanOrEqual(0.7);
     });
 
-    it('detects factory with conditional logic', () => {
-      const fn = unit({ name: 'buildWidget', kind: 'function', returnType: 'Widget', complexity: 3 });
+    it('detects factory with conditional construction', () => {
+      const widgetIface = unit({ name: 'Widget', kind: 'interface' });
+      const fn = unit({
+        name: 'buildWidget', kind: 'function', returnType: 'Widget', complexity: 3,
+        nodeTypes: ['NewExpression', 'IfStatement', 'ReturnStatement'],
+      });
       paths.set('buildWidget', '/factory.ts');
-      const patterns = detectCreationalPatterns([fn], paths);
+      paths.set('Widget', '/widget.ts');
+      const patterns = detectCreationalPatterns([fn, widgetIface], paths);
       const factory = patterns.find((p) => p.pattern === 'factory');
       expect(factory).toBeDefined();
       expect(factory!.confidence).toBeGreaterThanOrEqual(0.8);
     });
 
-    it('does not flag plain functions', () => {
+    it('does not flag function returning void', () => {
       const fn = unit({ name: 'processData', kind: 'function', returnType: 'void' });
       paths.set('processData', '/process.ts');
       const patterns = detectCreationalPatterns([fn], paths);
+      expect(patterns.find((p) => p.pattern === 'factory')).toBeUndefined();
+    });
+
+    it('does not flag function returning Promise<void>', () => {
+      const fn = unit({
+        name: 'setupPage', kind: 'function', returnType: 'Promise<void>',
+        nodeTypes: ['CallExpression', 'AwaitExpression'],
+      });
+      paths.set('setupPage', '/setup.ts');
+      const patterns = detectCreationalPatterns([fn], paths);
+      expect(patterns.find((p) => p.pattern === 'factory')).toBeUndefined();
+    });
+
+    it('does not flag function returning Record<string, string>', () => {
+      const fn = unit({
+        name: 'getConfig', kind: 'function', returnType: 'Record<string, string>',
+        nodeTypes: ['ObjectExpression', 'ReturnStatement'],
+      });
+      paths.set('getConfig', '/config.ts');
+      const patterns = detectCreationalPatterns([fn], paths);
+      expect(patterns.find((p) => p.pattern === 'factory')).toBeUndefined();
+    });
+
+    it('does not flag function returning array', () => {
+      const fn = unit({
+        name: 'filterItems', kind: 'function', returnType: 'T[]',
+        nodeTypes: ['CallExpression', 'ReturnStatement'],
+      });
+      paths.set('filterItems', '/filter.ts');
+      const patterns = detectCreationalPatterns([fn], paths);
+      expect(patterns.find((p) => p.pattern === 'factory')).toBeUndefined();
+    });
+
+    it('does not flag React hook', () => {
+      const fn = unit({
+        name: 'useCounter', kind: 'function', returnType: 'CounterState',
+        nodeTypes: ['NewExpression', 'ReturnStatement'],
+      });
+      paths.set('useCounter', '/hooks.ts');
+      const patterns = detectCreationalPatterns([fn], paths);
+      expect(patterns.find((p) => p.pattern === 'factory')).toBeUndefined();
+    });
+
+    it('does not flag test helper', () => {
+      const fn = unit({
+        name: 'createTestUser', kind: 'function', returnType: 'User',
+        nodeTypes: ['NewExpression', 'ReturnStatement'],
+      });
+      paths.set('createTestUser', '/tests/helpers.test.ts');
+      const userClass = unit({ name: 'User', kind: 'class' });
+      paths.set('User', '/user.ts');
+      const patterns = detectCreationalPatterns([fn, userClass], paths);
       expect(patterns.find((p) => p.pattern === 'factory')).toBeUndefined();
     });
   });

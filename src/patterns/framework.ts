@@ -1,11 +1,14 @@
 import type { CodeUnitRecord } from '../scanner/types.js';
 import type { DetectedPattern, PatternLocation } from './types.js';
+import { isTestFile } from './helpers.js';
 
 export function detectFrameworkPatterns(units: CodeUnitRecord[], filePaths: Map<string, string>): DetectedPattern[] {
+  // Filter out test files from framework pattern detection
+  const sourceUnits = units.filter((u) => !isTestFile(filePaths.get(u.name) ?? ''));
   const patterns: DetectedPattern[] = [];
 
-  patterns.push(...detectReactPatterns(units, filePaths));
-  patterns.push(...detectAngularPatterns(units, filePaths));
+  patterns.push(...detectReactPatterns(sourceUnits, filePaths));
+  patterns.push(...detectAngularPatterns(sourceUnits, filePaths));
 
   return patterns;
 }
