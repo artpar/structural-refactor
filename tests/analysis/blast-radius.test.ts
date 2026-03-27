@@ -14,6 +14,7 @@ import {
   type SymbolIndex,
 } from '../../src/indexing/symbol-index.js';
 import { createLogger, type LogEntry } from '../../src/core/logger.js';
+import { makeLogger } from "../helpers/index.js";
 
 function buildFixture(): { graph: ImportGraph; symbols: SymbolIndex } {
   let graph = createImportGraph();
@@ -70,12 +71,6 @@ function buildFixture(): { graph: ImportGraph; symbols: SymbolIndex } {
   });
 
   return { graph, symbols };
-}
-
-function makeLogger() {
-  const entries: LogEntry[] = [];
-  const logger = createLogger({ level: 'trace', sink: (e) => entries.push(e) });
-  return { logger, entries };
 }
 
 describe('computeBlastRadius', () => {

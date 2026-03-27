@@ -2,26 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Project, SyntaxKind } from 'ts-morph';
 import { inlineVariable } from '../../../src/operations/inline/inline-variable.js';
 import { createLogger, type LogEntry } from '../../../src/core/logger.js';
-
-function makeProject(files: Record<string, string>): Project {
-  const project = new Project({ useInMemoryFileSystem: true });
-  for (const [name, content] of Object.entries(files)) {
-    project.createSourceFile(name, content);
-  }
-  return project;
-}
-
-function makeLogger() {
-  const entries: LogEntry[] = [];
-  const logger = createLogger({ level: 'trace', sink: (e) => entries.push(e) });
-  return { logger, entries };
-}
-
-function parseAst(code: string) {
-  const p = new Project({ useInMemoryFileSystem: true });
-  return p.createSourceFile('/check.ts', code);
-}
-
+import { makeLogger, makeProject, parseAst } from "../../helpers/index.js";
 describe('inlineVariable', () => {
   it('inlines a simple const with single usage', () => {
     const project = makeProject({

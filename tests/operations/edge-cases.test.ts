@@ -20,14 +20,7 @@ import { replaceInheritanceWithComposition } from '../../src/operations/class/co
 import { cjsToEsm } from '../../src/operations/module/cjs-to-esm.js';
 import { defaultToNamed } from '../../src/operations/module/default-to-named.js';
 import { createLogger } from '../../src/core/logger.js';
-
-function makeProject(files: Record<string, string>): Project {
-  const project = new Project({ useInMemoryFileSystem: true });
-  for (const [name, content] of Object.entries(files)) {
-    project.createSourceFile(name, content);
-  }
-  return project;
-}
+import { makeProject } from "../helpers/index.js";
 
 const logger = createLogger({ level: 'error', sink: () => {} });
 

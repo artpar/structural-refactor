@@ -6,17 +6,7 @@ import {
   type ReferenceContext,
 } from '../../src/analysis/references.js';
 import { createLogger } from '../../src/core/logger.js';
-
-function makeProject(files: Record<string, string>): Project {
-  const project = new Project({
-    useInMemoryFileSystem: true,
-    compilerOptions: { jsx: 2 /* JsxEmit.React */ },
-  });
-  for (const [name, content] of Object.entries(files)) {
-    project.createSourceFile(name, content);
-  }
-  return project;
-}
+import { makeProject } from "../helpers/index.js";
 
 function makeLogger() {
   return createLogger({ level: 'trace', sink: () => {} });

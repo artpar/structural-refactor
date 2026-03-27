@@ -2,21 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Project } from 'ts-morph';
 import { inlineTypeAlias } from '../../../src/operations/inline/inline-type-alias.js';
 import { createLogger, type LogEntry } from '../../../src/core/logger.js';
-
-function makeProject(files: Record<string, string>): Project {
-  const project = new Project({ useInMemoryFileSystem: true });
-  for (const [name, content] of Object.entries(files)) {
-    project.createSourceFile(name, content);
-  }
-  return project;
-}
-
-function makeLogger() {
-  const entries: LogEntry[] = [];
-  const logger = createLogger({ level: 'trace', sink: (e) => entries.push(e) });
-  return { logger, entries };
-}
-
+import { makeLogger, makeProject } from "../../helpers/index.js";
 describe('inlineTypeAlias', () => {
   it('replaces type alias usages with its definition', () => {
     const code = 'type ID = string;\nconst userId: ID = "abc";\nfunction getUser(id: ID) { return id; }\n';

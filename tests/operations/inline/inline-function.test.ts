@@ -2,26 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Project, SyntaxKind } from 'ts-morph';
 import { inlineFunction } from '../../../src/operations/inline/inline-function.js';
 import { createLogger, type LogEntry } from '../../../src/core/logger.js';
-
-function makeProject(files: Record<string, string>): Project {
-  const project = new Project({ useInMemoryFileSystem: true });
-  for (const [name, content] of Object.entries(files)) {
-    project.createSourceFile(name, content);
-  }
-  return project;
-}
-
-function makeLogger() {
-  const entries: LogEntry[] = [];
-  const logger = createLogger({ level: 'trace', sink: (e) => entries.push(e) });
-  return { logger, entries };
-}
-
-function parseAst(code: string) {
-  const p = new Project({ useInMemoryFileSystem: true });
-  return p.createSourceFile('/check.ts', code);
-}
-
+import { makeLogger, makeProject, parseAst } from "../../helpers/index.js";
 describe('inlineFunction', () => {
   it('inlines a simple function with single return at a call site', () => {
     const code = 'function double(n: number) { return n * 2; }\nconst x = double(5);\n';

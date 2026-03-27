@@ -4,16 +4,10 @@ import path from 'node:path';
 import { scanProject } from '../../src/scanner/project-scanner.js';
 import { loadCache, saveCache, clearCache, type ScanCache } from '../../src/scanner/cache.js';
 import { createLogger, type LogEntry } from '../../src/core/logger.js';
+import { makeLogger } from "../helpers/index.js";
 
 const FIXTURES = path.resolve(import.meta.dirname, '../fixtures/simple-project');
 const CACHE_DIR = path.resolve(import.meta.dirname, '../.test-cache');
-
-function makeLogger() {
-  const entries: LogEntry[] = [];
-  const logger = createLogger({ level: 'trace', sink: (e) => entries.push(e) });
-  return { logger, entries };
-}
-
 afterEach(() => {
   // Clean up test cache
   if (fs.existsSync(CACHE_DIR)) {

@@ -3,21 +3,7 @@ import { Project } from 'ts-morph';
 import { renameSymbol } from '../../../src/operations/rename/rename-symbol.js';
 import { createLogger, type LogEntry } from '../../../src/core/logger.js';
 import type { ChangeSet } from '../../../src/core/change-set.js';
-
-function makeProject(files: Record<string, string>): Project {
-  const project = new Project({ useInMemoryFileSystem: true });
-  for (const [name, content] of Object.entries(files)) {
-    project.createSourceFile(name, content);
-  }
-  return project;
-}
-
-function makeLogger() {
-  const entries: LogEntry[] = [];
-  const logger = createLogger({ level: 'trace', sink: (e) => entries.push(e) });
-  return { logger, entries };
-}
-
+import { makeLogger, makeProject } from "../../helpers/index.js";
 describe('renameSymbol', () => {
   it('renames a variable in a single file', () => {
     const project = makeProject({

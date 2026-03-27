@@ -7,14 +7,7 @@ import {
   type FlowEdgeType,
 } from '../../src/analysis/dfg.js';
 import { createLogger } from '../../src/core/logger.js';
-
-function makeProject(files: Record<string, string>): Project {
-  const project = new Project({ useInMemoryFileSystem: true });
-  for (const [name, content] of Object.entries(files)) {
-    project.createSourceFile(name, content);
-  }
-  return project;
-}
+import { makeProject } from "../helpers/index.js";
 
 function makeLogger() {
   return createLogger({ level: 'trace', sink: () => {} });
