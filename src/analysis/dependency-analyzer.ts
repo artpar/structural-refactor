@@ -4,6 +4,8 @@ import { parseSync } from 'oxc-parser';
 import type { Logger } from '../core/logger.js';
 import { discoverFiles } from '../indexing/file-index.js';
 import { detectProject } from './project-detector.js';
+import { buildProjectIndex, type ProjectIndex } from '../scanner/index-store.js';
+import type { FileSummary } from '../scanner/file-summary.js';
 
 export interface ImportEdge {
   source: string;        // module specifier as written
@@ -35,6 +37,74 @@ export interface DependencyGraph {
   stats: GraphStats;
 }
 
+/**
+ * Fast dependency analysis using Level 1 file summaries.
+ * Only reads imports/exports from the pre-built index — no AST walking.
+ */
+export function analyzeDependenciesFast(rootDir: string, logger: Logger): DependencyGraph {
+  logger.info('dependency-analyzer', 'fast analysis from index', { rootDir });
+  const startMs = performance.now();
+
+  const projectInfo = detectProject(rootDir, logger);
+  const pathAliases = projectInfo.pathAliases ?? {};
+  const index = buildProjectIndex(rootDir, logger);
+
+  const modules = new Map<string, ModuleNode>();
+
+  for (const [filePath, summary] of index.summaries) {
+    const fileDir = path.dirname(filePath);
+    const internalImports: ImportEdge[] = [];
+    const externalImports: ImportEdge[] = [];
+
+    for (const imp of summary.imports) {
+      const resolved = resolveModulePath(imp.source, fileDir, rootDir, pathAliases);
+      const isExternal = resolved === '';
+      const edge: ImportEdge = { source: imp.source, resolved, specifiers: imp.specifiers, isExternal };
+      if (isExternal) externalImports.push(edge);
+      else internalImports.push(edge);
+    }
+
+    modules.set(filePath, {
+      filePath,
+      exports: summary.exports,
+      internalImports,
+      externalImports,
+      importedBy: [],
+    });
+  }
+
+  // Build reverse edges
+  for (const [filePath, mod] of modules) {
+    for (const imp of mod.internalImports) {
+      const target = modules.get(imp.resolved);
+      if (target && !target.importedBy.includes(filePath)) {
+        target.importedBy.push(filePath);
+      }
+    }
+  }
+
+  const entryPoints = [...modules.entries()].filter(([, m]) => m.importedBy.length === 0).map(([p]) => p);
+  const leaves = [...modules.entries()].filter(([, m]) => m.internalImports.length === 0).map(([p]) => p);
+
+  const externalDeps = new Set<string>();
+  let internalEdgeCount = 0;
+  for (const mod of modules.values()) {
+    internalEdgeCount += mod.internalImports.length;
+    for (const ext of mod.externalImports) externalDeps.add(ext.source);
+  }
+
+  const durationMs = Math.round(performance.now() - startMs);
+  logger.info('dependency-analyzer', 'fast analysis complete', {
+    moduleCount: modules.size, internalEdgeCount, externalDeps: externalDeps.size, durationMs,
+  });
+
+  return {
+    modules, entryPoints, leaves,
+    stats: { moduleCount: modules.size, externalDependencyCount: externalDeps.size, internalEdgeCount },
+  };
+}
+
+/** Original full analysis (kept for compatibility) */
 export function analyzeDependencies(rootDir: string, logger: Logger): DependencyGraph {
   logger.info('dependency-analyzer', 'starting analysis', { rootDir });
 
