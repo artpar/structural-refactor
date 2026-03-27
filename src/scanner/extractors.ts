@@ -11,8 +11,8 @@ export function extractAll(filePath: string, sourceText: string, contentHash: st
   return {
     filePath,
     contentHash,
-    imports: extractImports(result.module),
-    exports: extractExports(result.module),
+    imports: extractImports(result.module, result.program),
+    exports: extractExports(result.module, result.program),
     codeUnits: extractCodeUnits(result.program, sourceText),
     calls: extractCalls(result.program),
   };
@@ -20,9 +20,10 @@ export function extractAll(filePath: string, sourceText: string, contentHash: st
 
 // ─── Imports ────────────────────────────────────────────────────
 
-export function extractImports(mod: any): ImportRecord[] {
+export function extractImports(mod: any, program?: any): ImportRecord[] {
   const records: ImportRecord[] = [];
 
+  // ESM static imports
   for (const si of mod.staticImports) {
     const specifiers: string[] = [];
     for (const entry of si.entries) {
@@ -36,6 +37,11 @@ export function extractImports(mod: any): ImportRecord[] {
       resolved: '',
       isExternal: !si.moduleRequest.value.startsWith('.'),
     });
+  }
+
+  // CJS require() calls — scan AST for CallExpression where callee is 'require'
+  if (program) {
+    extractCjsRequires(program, records);
   }
 
   // Re-exports also create import dependencies
@@ -52,9 +58,41 @@ export function extractImports(mod: any): ImportRecord[] {
   return records;
 }
 
+/** Extract CJS require() calls from the AST as import records */
+function extractCjsRequires(program: any, records: ImportRecord[]): void {
+  walkAst(program, (node: any) => {
+    if (node.type !== 'CallExpression') return;
+
+    const callee = node.callee;
+    if (!callee || callee.type !== 'Identifier' || callee.name !== 'require') return;
+
+    const args = node.arguments;
+    if (!args || args.length !== 1) return;
+
+    const arg = args[0];
+    if (arg.type !== 'StringLiteral' && arg.type !== 'Literal') return;
+    if (typeof arg.value !== 'string') return;
+
+    const source = arg.value;
+
+    // Determine what's being imported — check the parent
+    const specifiers: string[] = ['default']; // require() is effectively a default import
+
+    // Avoid duplicating if already captured via staticImports
+    if (records.some((r) => r.source === source)) return;
+
+    records.push({
+      source,
+      specifiers,
+      resolved: '',
+      isExternal: !source.startsWith('.'),
+    });
+  }, []);
+}
+
 // ─── Exports ────────────────────────────────────────────────────
 
-export function extractExports(mod: any): ExportRecord[] {
+export function extractExports(mod: any, program?: any): ExportRecord[] {
   const records: ExportRecord[] = [];
 
   for (const se of mod.staticExports) {
@@ -69,6 +107,32 @@ export function extractExports(mod: any): ExportRecord[] {
         reExportSource: entry.moduleRequest?.value,
       });
     }
+  }
+
+  // CJS: module.exports = X → default export; exports.name = X → named export
+  if (program) {
+    walkAst(program, (node: any) => {
+      if (node.type !== 'AssignmentExpression' && node.type !== 'BinaryExpression') return;
+      const left = node.left;
+      if (!left) return;
+
+      if (left.type === 'MemberExpression') {
+        const obj = left.object;
+        const prop = left.property;
+        // module.exports = X
+        if (obj?.type === 'MemberExpression' && obj.object?.name === 'module' && obj.property?.name === 'exports' && prop) {
+          // module.exports.name = X
+          if (prop.name) {
+            records.push({ name: prop.name, isDefault: false, isReExport: false });
+          }
+        } else if (obj?.name === 'module' && prop?.name === 'exports') {
+          records.push({ name: 'default', isDefault: true, isReExport: false });
+        } else if (obj?.name === 'exports' && prop?.name) {
+          // exports.name = X
+          records.push({ name: prop.name, isDefault: false, isReExport: false });
+        }
+      }
+    }, []);
   }
 
   return records;

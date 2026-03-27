@@ -129,7 +129,7 @@ function parseFileImportsExports(
   const externalImports: ImportEdge[] = [];
   const exports: string[] = [];
 
-  // Extract imports
+  // Extract ESM imports
   for (const staticImport of mod.staticImports) {
     const source = staticImport.moduleRequest.value;
     const specifiers: string[] = [];
@@ -150,6 +150,21 @@ function parseFileImportsExports(
       internalImports.push(edge);
     }
   }
+
+  // Extract CJS require() calls from AST
+  walkCjsRequires(result.program, (source: string) => {
+    // Skip if already captured via staticImports
+    if (internalImports.some((e) => e.source === source) || externalImports.some((e) => e.source === source)) return;
+
+    const resolved = resolveModulePath(source, fileDir, rootDir, pathAliases);
+    const isExternal = resolved === '';
+    const edge: ImportEdge = { source, resolved, specifiers: ['default'], isExternal };
+    if (isExternal) {
+      externalImports.push(edge);
+    } else {
+      internalImports.push(edge);
+    }
+  });
 
   // Extract exports (including re-exports)
   for (const staticExport of mod.staticExports) {
@@ -256,4 +271,24 @@ function tryResolveFile(basePath: string): string | undefined {
   }
 
   return undefined;
+}
+
+/** Walk AST to find CJS require() calls and invoke callback with each source string */
+function walkCjsRequires(node: any, onRequire: (source: string) => void): void {
+  if (!node || typeof node !== 'object') return;
+  if (node.type === 'CallExpression' && node.callee?.type === 'Identifier' && node.callee.name === 'require') {
+    const args = node.arguments;
+    if (args?.length === 1 && (args[0].type === 'StringLiteral' || args[0].type === 'Literal') && typeof args[0].value === 'string') {
+      onRequire(args[0].value);
+    }
+  }
+  for (const key of Object.keys(node)) {
+    if (key === 'type' || key === 'start' || key === 'end') continue;
+    const child = node[key];
+    if (Array.isArray(child)) {
+      for (const item of child) walkCjsRequires(item, onRequire);
+    } else if (child && typeof child === 'object' && child.type) {
+      walkCjsRequires(child, onRequire);
+    }
+  }
 }

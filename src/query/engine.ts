@@ -4,12 +4,10 @@
  * inverted index (fast candidate retrieval), and lookup maps (O(1) queries).
  */
 import fs from 'node:fs';
-import path from 'node:path';
-import { parseSync } from 'oxc-parser';
 import type { Logger } from '../core/logger.js';
 import { discoverFiles } from '../indexing/file-index.js';
 import { extractAll } from '../scanner/extractors.js';
-import { merkleHash, subtreeHashes, diceSimilarity } from '../fingerprint/hasher.js';
+import { diceSimilarity } from '../fingerprint/hasher.js';
 import type { CodeUnitRecord, CodeUnitKind, ScanResult } from '../scanner/types.js';
 
 // ─── Public types ───────────────────────────────────────────────
@@ -105,7 +103,7 @@ export function createQueryEngine(rootDir: string, logger: Logger): QueryEngine 
 
     // For each code unit, compute fingerprints and build indexed unit
     for (const unit of scanResult.codeUnits) {
-      const indexed = buildIndexedUnit(unit, filePath, sourceText, logger);
+      const indexed = buildIndexedUnit(unit, filePath);
       allUnits.push(indexed);
 
       // Populate lookup indexes
@@ -244,23 +242,12 @@ export function createQueryEngine(rootDir: string, logger: Logger): QueryEngine 
 function buildIndexedUnit(
   unit: CodeUnitRecord,
   filePath: string,
-  sourceText: string,
-  logger: Logger,
 ): IndexedUnit {
-  // Compute Merkle subtree hashes from the raw AST
-  let hashes: number[] = [];
-  try {
-    const result = parseSync(filePath, sourceText);
-    // Find the AST node for this unit
-    const astNode = findUnitAstNode(result.program, unit.name, unit.kind);
-    if (astNode) {
-      hashes = subtreeHashes(astNode);
-    }
-  } catch {
-    // Parsing may fail for some files, that's ok
-  }
+  // Compute structural hashes from nodeTypes already in CodeUnitRecord
+  // NO re-parsing — nodeTypes were extracted during the scan pass
+  const hashes = hashFromNodeTypes(unit.nodeTypes);
 
-  // Build token bag from typeTokens
+  // Build token bag from typeTokens (also already extracted)
   const tokenBag = new Map<string, number>();
   for (const token of unit.typeTokens) {
     tokenBag.set(token, (tokenBag.get(token) ?? 0) + 1);
@@ -283,21 +270,38 @@ function buildIndexedUnit(
   };
 }
 
-function findUnitAstNode(program: any, name: string, kind: CodeUnitKind): any | undefined {
-  let found: any;
-  walkAst(program, (node: any) => {
-    if (found) return;
-    if (node.type === 'FunctionDeclaration' && node.id?.name === name && (kind === 'function')) {
-      found = node;
+/**
+ * Compute structural hashes from pre-extracted nodeTypes array.
+ * NO re-parsing — uses the post-order node type sequence from the scan pass.
+ * FNV-1a hash for speed.
+ */
+function hashFromNodeTypes(nodeTypes: string[]): number[] {
+  if (nodeTypes.length === 0) return [];
+
+  const hashes: number[] = [];
+  // Each node type gets a hash, and we also create composite hashes
+  // for subsequences (simulating subtree hashes)
+  for (let i = 0; i < nodeTypes.length; i++) {
+    hashes.push(fnv1a(nodeTypes[i]));
+    // 2-gram and 3-gram hashes for structural similarity
+    if (i + 1 < nodeTypes.length) {
+      hashes.push(fnv1a(nodeTypes[i] + ':' + nodeTypes[i + 1]));
     }
-    if (node.type === 'VariableDeclarator' && node.id?.name === name && node.init &&
-        (node.init.type === 'ArrowFunctionExpression' || node.init.type === 'FunctionExpression')) {
-      found = node.init;
+    if (i + 2 < nodeTypes.length) {
+      hashes.push(fnv1a(nodeTypes[i] + ':' + nodeTypes[i + 1] + ':' + nodeTypes[i + 2]));
     }
-    if (node.type === 'ClassDeclaration' && node.id?.name === name) found = node;
-    if (node.type === 'TSInterfaceDeclaration' && node.id?.name === name) found = node;
-  });
-  return found;
+  }
+
+  return hashes;
+}
+
+function fnv1a(str: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = (hash * 0x01000193) >>> 0;
+  }
+  return hash;
 }
 
 /** Inverted token index: token → list of unit indices */
@@ -373,16 +377,3 @@ function addToMapNum(map: Map<number, IndexedUnit[]>, key: number, unit: Indexed
   else map.set(key, [unit]);
 }
 
-function walkAst(node: any, visitor: (node: any) => void): void {
-  if (!node || typeof node !== 'object') return;
-  if (node.type) visitor(node);
-  for (const key of Object.keys(node)) {
-    if (key === 'type' || key === 'start' || key === 'end') continue;
-    const child = node[key];
-    if (Array.isArray(child)) {
-      for (const item of child) walkAst(item, visitor);
-    } else if (child && typeof child === 'object' && child.type) {
-      walkAst(child, visitor);
-    }
-  }
-}
