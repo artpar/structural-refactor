@@ -115,3 +115,8 @@ export function isReactHook(name: string): boolean {
 export function containsDelegation(unit: CodeUnitRecord): boolean {
   return unit.nodeTypes.includes('MemberExpression') && unit.nodeTypes.includes('CallExpression');
 }
+
+/** Shared location builder for pattern detectors — single source of truth */
+export function loc(unit: CodeUnitRecord, filePaths: Map<string, string>): import('./types.js').PatternLocation {
+  return { filePath: filePaths.get(unit.name) ?? '', unitName: unit.name, line: unit.line };
+}

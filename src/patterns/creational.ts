@@ -14,8 +14,7 @@ import {
   returnTypeIsProjectType,
   isExcludedReturnType,
   isReactHook,
-  isTestFile,
-} from './helpers.js';
+  isTestFile, loc } from './helpers.js';
 
 export function detectCreationalPatterns(units: CodeUnitRecord[], filePaths: Map<string, string>): DetectedPattern[] {
   const patterns: DetectedPattern[] = [];
@@ -160,8 +159,4 @@ function detectBuilders(units: CodeUnitRecord[], filePaths: Map<string, string>)
   }
 
   return patterns;
-}
-
-function loc(unit: CodeUnitRecord, filePaths: Map<string, string>): PatternLocation {
-  return { filePath: filePaths.get(unit.name) ?? '', unitName: unit.name, line: unit.line };
 }

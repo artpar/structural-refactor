@@ -3,6 +3,7 @@ import type {
   ImportRecord, ExportRecord, CodeUnitRecord, CallRecord, ScanResult,
   ParamRecord, MemberRecord, StatementType, CodeUnitKind,
 } from './types.js';
+import { walkAst, walkAstPostOrder } from '../utils/ast-walk.js';
 
 // ─── Top-level: extract everything from one file ────────────────
 
@@ -531,33 +532,4 @@ function countLines(text: string, start: number, end: number): number {
   return lines;
 }
 
-function walkAst(node: any, visitor: (node: any, parents: any[]) => void, parents: any[] = []): void {
-  if (!node || typeof node !== 'object') return;
-  if (node.type) {
-    visitor(node, parents);
-    parents = [...parents, node];
-  }
-  for (const key of Object.keys(node)) {
-    if (key === 'type' || key === 'start' || key === 'end') continue;
-    const child = node[key];
-    if (Array.isArray(child)) {
-      for (const item of child) walkAst(item, visitor, parents);
-    } else if (child && typeof child === 'object' && child.type) {
-      walkAst(child, visitor, parents);
-    }
-  }
-}
-
-function walkAstPostOrder(node: any, visitor: (node: any) => void): void {
-  if (!node || typeof node !== 'object') return;
-  for (const key of Object.keys(node)) {
-    if (key === 'type' || key === 'start' || key === 'end') continue;
-    const child = node[key];
-    if (Array.isArray(child)) {
-      for (const item of child) walkAstPostOrder(item, visitor);
-    } else if (child && typeof child === 'object' && child.type) {
-      walkAstPostOrder(child, visitor);
-    }
-  }
-  if (node.type) visitor(node);
-}
+// walkAst and walkAstPostOrder imported from src/utils/ast-walk.ts (single source of truth)

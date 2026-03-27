@@ -1,6 +1,6 @@
 import type { CodeUnitRecord } from '../scanner/types.js';
 import type { DetectedPattern, PatternLocation } from './types.js';
-import { isTestFile } from './helpers.js';
+import { isTestFile, loc } from './helpers.js';
 
 export function detectFrameworkPatterns(units: CodeUnitRecord[], filePaths: Map<string, string>): DetectedPattern[] {
   // Filter out test files from framework pattern detection
@@ -122,8 +122,4 @@ function detectAngularPatterns(units: CodeUnitRecord[], filePaths: Map<string, s
   }
 
   return patterns;
-}
-
-function loc(unit: CodeUnitRecord, filePaths: Map<string, string>): PatternLocation {
-  return { filePath: filePaths.get(unit.name) ?? '', unitName: unit.name, line: unit.line };
 }

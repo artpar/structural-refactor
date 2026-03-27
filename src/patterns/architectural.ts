@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { CodeUnitRecord, ScanResult } from '../scanner/types.js';
 import type { DetectedPattern, PatternLocation, LayerInfo } from './types.js';
+import { loc } from "./helpers.js";
 
 export function detectArchitecturalPatterns(
   units: CodeUnitRecord[],
@@ -198,8 +199,4 @@ function detectMVC(
   }
 
   return patterns;
-}
-
-function loc(unit: CodeUnitRecord, filePaths: Map<string, string>): PatternLocation {
-  return { filePath: filePaths.get(unit.name) ?? '', unitName: unit.name, line: unit.line };
 }

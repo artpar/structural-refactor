@@ -13,6 +13,7 @@ import { registerAnalyze } from './commands/analyze.js';
 import { registerDiscover } from './commands/discover.js';
 import { registerPatterns } from './commands/patterns.js';
 import { registerUndo } from './commands/undo.js';
+import { registerModify } from './commands/modify.js';
 
 export function createProgram(): Command {
   const program = new Command();
@@ -42,6 +43,7 @@ export function createProgram(): Command {
   registerDiscover(program);
   registerPatterns(program);
   registerUndo(program);
+  registerModify(program);
 
   return program;
 }

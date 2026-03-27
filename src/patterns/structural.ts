@@ -1,5 +1,6 @@
 import type { CodeUnitRecord, ScanResult } from '../scanner/types.js';
 import type { DetectedPattern, PatternLocation } from './types.js';
+import { loc } from "./helpers.js";
 
 export function detectStructuralPatterns(
   units: CodeUnitRecord[],
@@ -120,8 +121,4 @@ function detectComposites(units: CodeUnitRecord[], filePaths: Map<string, string
   }
 
   return patterns;
-}
-
-function loc(unit: CodeUnitRecord, filePaths: Map<string, string>): PatternLocation {
-  return { filePath: filePaths.get(unit.name) ?? '', unitName: unit.name, line: unit.line };
 }

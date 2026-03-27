@@ -4,6 +4,7 @@ import { parseSync } from 'oxc-parser';
 import type { Logger } from '../core/logger.js';
 import { discoverFiles } from '../indexing/file-index.js';
 import { walkAst } from '../utils/ast-walk.js';
+import { isTestFile } from "../patterns/helpers.js";
 
 export interface CallRef {
   name: string;
@@ -38,10 +39,6 @@ export interface CallGraph {
 }
 
 const TEST_PATTERNS = [/\.test\.[jt]sx?$/, /\.spec\.[jt]sx?$/, /\/__tests__\//];
-
-function isTestFile(filePath: string): boolean {
-  return TEST_PATTERNS.some((p) => p.test(filePath));
-}
 
 export function buildCallGraph(rootDir: string, logger: Logger): CallGraph {
   logger.info('call-graph', 'building call graph', { rootDir });

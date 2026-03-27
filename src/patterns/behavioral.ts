@@ -1,5 +1,6 @@
 import type { CodeUnitRecord } from '../scanner/types.js';
 import type { DetectedPattern, PatternLocation } from './types.js';
+import { loc } from "./helpers.js";
 
 export function detectBehavioralPatterns(units: CodeUnitRecord[], filePaths: Map<string, string>): DetectedPattern[] {
   const patterns: DetectedPattern[] = [];
@@ -169,8 +170,4 @@ function detectStrategy(units: CodeUnitRecord[], filePaths: Map<string, string>)
   }
 
   return patterns;
-}
-
-function loc(unit: CodeUnitRecord, filePaths: Map<string, string>): PatternLocation {
-  return { filePath: filePaths.get(unit.name) ?? '', unitName: unit.name, line: unit.line };
 }

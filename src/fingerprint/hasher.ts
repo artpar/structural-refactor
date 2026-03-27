@@ -13,7 +13,7 @@
 const COMMUTATIVE_OPS = new Set(['+', '*', '&', '|', '^', '&&', '||', '==', '===', '!=', '!==']);
 
 // Simple fast hash (FNV-1a 32-bit)
-function fnv1a(str: string): number {
+export function fnv1a(str: string): number {
   let hash = 0x811c9dc5;
   for (let i = 0; i < str.length; i++) {
     hash ^= str.charCodeAt(i);

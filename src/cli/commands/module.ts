@@ -2,6 +2,7 @@ import type { Command } from 'commander';
 import { createExecutionContext, createProject, handleResult } from '../execute.js';
 import { cjsToEsm } from '../../operations/module/cjs-to-esm.js';
 import { defaultToNamed } from '../../operations/module/default-to-named.js';
+import { replaceWithImport } from '../../operations/module/replace-with-import.js';
 
 export function registerModule(program: Command): void {
   const mod = program
@@ -29,6 +30,21 @@ export function registerModule(program: Command): void {
       const ctx = createExecutionContext(globalOpts);
       const project = createProject(ctx, [opts.path]);
       const cs = defaultToNamed(project, { filePath: opts.path, logger: ctx.logger });
+      handleResult(ctx, cs);
+    });
+
+  mod
+    .command('replace-with-import <name>')
+    .description('Replace local function/variable with import from another module')
+    .requiredOption('--from <module>', 'Module to import from (e.g., ./helpers.js)')
+    .requiredOption('--path <file>', 'File containing the local definition')
+    .action((name, opts, cmd) => {
+      const globalOpts = cmd.optsWithGlobals();
+      const ctx = createExecutionContext(globalOpts);
+      const project = createProject(ctx, [opts.path]);
+      const cs = replaceWithImport(project, {
+        filePath: opts.path, symbolName: name, fromModule: opts.from, logger: ctx.logger,
+      });
       handleResult(ctx, cs);
     });
 }

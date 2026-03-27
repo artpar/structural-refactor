@@ -24,7 +24,8 @@ describe('CLI program', () => {
     expect(commands).toContain('discover');
     expect(commands).toContain('patterns');
     expect(commands).toContain('undo');
-    expect(commands).toHaveLength(14);
+    expect(commands).toContain('modify');
+    expect(commands).toHaveLength(15);
   });
 
   it('has global options', () => {

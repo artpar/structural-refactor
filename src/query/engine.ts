@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import type { Logger } from '../core/logger.js';
 import { extractAll } from '../scanner/extractors.js';
-import { diceSimilarity } from '../fingerprint/hasher.js';
+import { diceSimilarity, fnv1a } from '../fingerprint/hasher.js';
 import type { CodeUnitRecord, CodeUnitKind } from '../scanner/types.js';
 import { buildProjectIndex, type ProjectIndex } from '../scanner/index-store.js';
 import type { FileSummary } from '../scanner/file-summary.js';
@@ -271,15 +271,6 @@ function hashFromNodeTypes(nodeTypes: string[]): number[] {
     if (i + 2 < nodeTypes.length) hashes.push(fnv1a(nodeTypes[i] + ':' + nodeTypes[i + 1] + ':' + nodeTypes[i + 2]));
   }
   return hashes;
-}
-
-function fnv1a(str: string): number {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < str.length; i++) {
-    hash ^= str.charCodeAt(i);
-    hash = (hash * 0x01000193) >>> 0;
-  }
-  return hash;
 }
 
 function tokenOverlap(a: Map<string, number>, b: Map<string, number>): number {
