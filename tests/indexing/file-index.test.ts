@@ -41,6 +41,13 @@ describe('discoverFiles', () => {
     expect(files).toEqual([]);
   });
 
+  it('excludes dist_ prefixed directories by default', () => {
+    const { logger } = makeLogger();
+    const files = discoverFiles(FIXTURES, logger);
+    const hasDist = files.some((f) => f.includes('/dist_'));
+    expect(hasDist).toBe(false);
+  });
+
   it('logs discovery stats', () => {
     const { logger, entries } = makeLogger();
     discoverFiles(FIXTURES, logger);

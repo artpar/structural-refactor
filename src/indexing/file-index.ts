@@ -8,7 +8,7 @@ export interface DiscoverOptions {
 }
 
 const DEFAULT_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
-const DEFAULT_EXCLUDE = ['**/node_modules/**', '**/dist/**', '**/.git/**'];
+const DEFAULT_EXCLUDE = ['**/node_modules/**', '**/dist/**', '**/dist_*/**', '**/.git/**'];
 
 export function discoverFiles(
   rootDir: string,
