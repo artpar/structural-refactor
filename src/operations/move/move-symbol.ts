@@ -64,8 +64,8 @@ export function moveSymbol(project: Project, args: MoveSymbolArgs): ChangeSet {
     }
     logger.info('move-symbol', 'target already has symbol, skipping copy', { symbolName });
   } else {
-    // Add the declaration to the target file
-    let declText = decl.getFullText();
+    // #19: Get only the node's own leading comments + declaration text (not accumulated trivia)
+    let declText = getOwnText(decl);
 
     // Issue #5: If source symbol is not exported, add export in target
     if (!isExported) {
@@ -75,8 +75,8 @@ export function moveSymbol(project: Project, args: MoveSymbolArgs): ChangeSet {
     targetSf.addStatements(declText);
   }
 
-  // Remove from source
-  removeNode(decl);
+  // #17: Remove from source including leading comments
+  removeNodeWithComments(decl);
 
   // Issue #5: If symbol was non-exported, add import in source so references still work
   if (!isExported) {
@@ -145,11 +145,9 @@ export function moveSymbol(project: Project, args: MoveSymbolArgs): ChangeSet {
 
 /** Find a declaration by name — checks exported first, then non-exported */
 function findDeclaration(sourceFile: ReturnType<Project['getSourceFileOrThrow']>, name: string): Node | undefined {
-  // Check function declarations
   const fn = sourceFile.getFunction(name);
   if (fn) return fn;
 
-  // Check variable declarations — return the full variable statement
   for (const stmt of sourceFile.getVariableStatements()) {
     for (const decl of stmt.getDeclarations()) {
       if (decl.getName() === name) {
@@ -158,19 +156,15 @@ function findDeclaration(sourceFile: ReturnType<Project['getSourceFileOrThrow']>
     }
   }
 
-  // Check class declarations
   const cls = sourceFile.getClass(name);
   if (cls) return cls;
 
-  // Check interface declarations
   const iface = sourceFile.getInterface(name);
   if (iface) return iface;
 
-  // Check type aliases
   const typeAlias = sourceFile.getTypeAlias(name);
   if (typeAlias) return typeAlias;
 
-  // Check enum declarations
   const enumDecl = sourceFile.getEnum(name);
   if (enumDecl) return enumDecl;
 
@@ -188,47 +182,94 @@ function isNodeExported(node: Node): boolean {
   return false;
 }
 
-/** Remove a node from the AST */
-function removeNode(node: Node): void {
+/**
+ * #19: Get the node's own leading comments + its text (without accumulated trivia).
+ * getFullText() returns ALL trivia between the previous node and this one,
+ * which accumulates comments from previously moved symbols. Instead, extract
+ * only the comments that directly precede this node.
+ */
+function getOwnText(node: Node): string {
+  const nodeText = node.getText();
+  const comments = node.getLeadingCommentRanges();
+  if (comments.length === 0) return nodeText;
+
+  const commentTexts = comments.map((c) => c.getText());
+  return commentTexts.join('\n') + '\n' + nodeText;
+}
+
+/**
+ * #17: Remove a node AND its leading comments from the source file.
+ * ts-morph's .remove() only removes the node, leaving orphaned comments.
+ * Strategy: capture comment text before removal, remove node, then strip comments from source.
+ */
+function removeNodeWithComments(node: Node): void {
+  // Capture leading comment texts before removing the node
+  const commentTexts = node.getLeadingCommentRanges().map((c) => c.getText());
+  const sourceFile = node.getSourceFile();
+
+  // Remove the node itself
   if (Node.isFunctionDeclaration(node)) node.remove();
   else if (Node.isClassDeclaration(node)) node.remove();
   else if (Node.isInterfaceDeclaration(node)) node.remove();
   else if (Node.isTypeAliasDeclaration(node)) node.remove();
   else if (Node.isEnumDeclaration(node)) node.remove();
   else if (Node.isVariableStatement(node)) node.remove();
+
+  // Now strip orphaned comments from the source text
+  if (commentTexts.length > 0) {
+    let text = sourceFile.getFullText();
+    for (const comment of commentTexts) {
+      // Remove the comment and its trailing newline
+      const idx = text.indexOf(comment);
+      if (idx !== -1) {
+        let end = idx + comment.length;
+        if (text[end] === '\n') end++;
+        text = text.slice(0, idx) + text.slice(end);
+      }
+    }
+    sourceFile.replaceWithText(text);
+  }
 }
 
 /** Ensure a declaration text has 'export' before the declaration keyword */
 function ensureExported(declText: string): string {
   if (/\bexport\b/.test(declText)) return declText;
-  // Insert 'export ' before the declaration keyword, not before leading comments
   const declKeywords = /^(const |let |var |function |class |interface |type |enum |abstract |async )/m;
   return declText.replace(declKeywords, 'export $1');
 }
 
-/** Remove import specifiers that are no longer referenced in the source file */
+/**
+ * #18: Remove import specifiers that are no longer referenced in the source file.
+ * Handles: side-effect imports (preserved), aliased imports, JSX identifiers.
+ */
 function removeUnusedImports(sourceFile: ReturnType<Project['getSourceFileOrThrow']>): void {
   // Collect all identifier names used in the file, excluding import specifiers
   const usedNames = new Set<string>();
   for (const id of sourceFile.getDescendantsOfKind(SyntaxKind.Identifier)) {
-    // Skip identifiers that are part of import specifiers
     const parent = id.getParent();
     if (parent && Node.isImportSpecifier(parent)) continue;
-    // Skip the module specifier string identifiers
     if (parent && Node.isImportDeclaration(parent)) continue;
     usedNames.add(id.getText());
   }
 
-  // Now check each import declaration
   for (const importDecl of sourceFile.getImportDeclarations()) {
+    // #18: Preserve side-effect imports (no specifiers at all)
+    const hasNamed = importDecl.getNamedImports().length > 0;
+    const hasDefault = importDecl.getDefaultImport() !== undefined;
+    const hasNamespace = importDecl.getNamespaceImport() !== undefined;
+    if (!hasNamed && !hasDefault && !hasNamespace) continue;
+
     const namedImports = importDecl.getNamedImports();
     for (const specifier of [...namedImports]) {
-      if (!usedNames.has(specifier.getName())) {
+      // #18: For aliased imports, check the alias name (what's actually used in code)
+      const aliasNode = specifier.getAliasNode();
+      const nameUsedInCode = aliasNode ? aliasNode.getText() : specifier.getName();
+      if (!usedNames.has(nameUsedInCode)) {
         specifier.remove();
       }
     }
 
-    // Remove entire declaration if empty
+    // Remove entire declaration if all specifiers were removed
     if (importDecl.getNamedImports().length === 0 && !importDecl.getDefaultImport() && !importDecl.getNamespaceImport()) {
       importDecl.remove();
     }

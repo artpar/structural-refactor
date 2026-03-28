@@ -281,6 +281,130 @@ describe('moveSymbol', () => {
     expect(targetChange.modified).toContain('export const isFloating');
   });
 
+  // Issue #17: orphaned comments left behind when removing declarations
+  it('removes leading comments when removing a declaration', () => {
+    const project = makeProject({
+      '/src/source.ts': '// helper docs\nexport function helper() { return 1; }\nexport function other() { return 2; }\n',
+      '/src/target.ts': '',
+    });
+    const { logger } = makeLogger();
+
+    const cs = moveSymbol(project, {
+      symbolName: 'helper',
+      fromFile: '/src/source.ts',
+      toFile: '/src/target.ts',
+      logger,
+    });
+
+    const sourceChange = cs.files.find((f) => f.path === '/src/source.ts')!;
+    expect(sourceChange).toBeDefined();
+    // The comment that belonged to helper should be gone
+    expect(sourceChange.modified).not.toContain('// helper docs');
+    // other should still be there
+    expect(sourceChange.modified).toContain('function other');
+  });
+
+  // Issue #18: removes unrelated imports from source file
+  it('preserves side-effect imports', () => {
+    const project = makeProject({
+      '/src/source.ts': 'import "./styles.css";\nexport function helper() { return 1; }\nexport function other() { return 2; }\n',
+      '/src/target.ts': '',
+    });
+    const { logger } = makeLogger();
+
+    const cs = moveSymbol(project, {
+      symbolName: 'helper',
+      fromFile: '/src/source.ts',
+      toFile: '/src/target.ts',
+      logger,
+    });
+
+    const sourceChange = cs.files.find((f) => f.path === '/src/source.ts')!;
+    expect(sourceChange).toBeDefined();
+    expect(sourceChange.modified).toContain('./styles.css');
+  });
+
+  it('preserves aliased imports that are used', () => {
+    const project = makeProject({
+      '/src/dep.ts': 'export function derivePlanSteps() { return []; }\n',
+      '/src/source.ts': 'import { derivePlanSteps as deriveSteps } from "./dep";\nexport function helper() { return 1; }\nexport function other() { return deriveSteps(); }\n',
+      '/src/target.ts': '',
+    });
+    const { logger } = makeLogger();
+
+    const cs = moveSymbol(project, {
+      symbolName: 'helper',
+      fromFile: '/src/source.ts',
+      toFile: '/src/target.ts',
+      logger,
+    });
+
+    const sourceChange = cs.files.find((f) => f.path === '/src/source.ts')!;
+    expect(sourceChange).toBeDefined();
+    // The aliased import should still be there because other() uses deriveSteps
+    expect(sourceChange.modified).toContain('derivePlanSteps as deriveSteps');
+  });
+
+  // Issue #19: accumulates leading comments from all previous moves in target file
+  it('carries only the symbol own comment, not accumulated trivia', () => {
+    const project = makeProject({
+      '/src/source.ts': '// comment A\nexport function a() { return 1; }\n// comment B\nexport function b() { return 2; }\n',
+      '/src/target.ts': '',
+    });
+    const { logger } = makeLogger();
+
+    // Move a first
+    moveSymbol(project, {
+      symbolName: 'a',
+      fromFile: '/src/source.ts',
+      toFile: '/src/target.ts',
+      logger,
+    });
+
+    // Move b second
+    const cs = moveSymbol(project, {
+      symbolName: 'b',
+      fromFile: '/src/source.ts',
+      toFile: '/src/target.ts',
+      logger,
+    });
+
+    const targetChange = cs.files.find((f) => f.path === '/src/target.ts')!;
+    expect(targetChange).toBeDefined();
+    // Count occurrences of "comment A" — should appear exactly once
+    const commentACount = (targetChange.modified.match(/comment A/g) || []).length;
+    expect(commentACount).toBe(1);
+    // "comment B" should appear exactly once
+    const commentBCount = (targetChange.modified.match(/comment B/g) || []).length;
+    expect(commentBCount).toBe(1);
+  });
+
+  // Issue #20: missing import in source when non-exported symbol used in JSX
+  it('preserves import for non-exported symbol used in JSX', () => {
+    const project = makeProject({
+      '/src/source.tsx': 'const LinkIcon = () => <svg></svg>;\nexport function App() { return <div><LinkIcon /></div>; }\n',
+      '/src/target.ts': '',
+    });
+    const { logger } = makeLogger();
+
+    const cs = moveSymbol(project, {
+      symbolName: 'LinkIcon',
+      fromFile: '/src/source.tsx',
+      toFile: '/src/target.ts',
+      logger,
+    });
+
+    // Source should have an import for LinkIcon since App() still uses it in JSX
+    const sourceChange = cs.files.find((f) => f.path === '/src/source.tsx')!;
+    expect(sourceChange).toBeDefined();
+    const sourceSf = parseAst(sourceChange.modified);
+    const importDecl = sourceSf.getImportDeclarations().find(
+      (d) => d.getModuleSpecifierValue() === './target'
+    );
+    expect(importDecl).toBeDefined();
+    expect(importDecl!.getNamedImports().some((n) => n.getName() === 'LinkIcon')).toBe(true);
+  });
+
   it('logs the move operation', () => {
     const project = makeProject({
       '/src/source.ts': 'export function fn() {}\n',
