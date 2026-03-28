@@ -3,7 +3,7 @@
  * Uses findReferences() to check each exported symbol across ALL project files.
  * All mutations via ts-morph API — no string manipulation.
  */
-import { Project, Node, SyntaxKind } from 'ts-morph';
+import { Project, Node } from 'ts-morph';
 import type { ChangeSet } from '../../core/change-set.js';
 import type { Logger } from '../../core/logger.js';
 import { executeRefactoring, preconditionOk, preconditionFail } from '../engine.js';
@@ -109,20 +109,17 @@ function getExportedDeclarations(sf: ReturnType<Project['getSourceFileOrThrow']>
 
 function hasExternalReferences(node: Node, declaringFilePath: string): boolean {
   // Get the name node for findReferences
-  let nameNode: Node | undefined;
-  if (Node.isFunctionDeclaration(node)) nameNode = node.getNameNode();
-  else if (Node.isClassDeclaration(node)) nameNode = node.getNameNode();
-  else if (Node.isInterfaceDeclaration(node)) nameNode = node.getNameNode();
-  else if (Node.isTypeAliasDeclaration(node)) nameNode = node.getNameNode();
-  else if (Node.isEnumDeclaration(node)) nameNode = node.getNameNode();
+  // Get references via the specific declaration type (findReferencesAsNodes is on concrete types, not base Node)
+  let refs: Node[] = [];
+  if (Node.isFunctionDeclaration(node)) refs = node.findReferencesAsNodes();
+  else if (Node.isClassDeclaration(node)) refs = node.findReferencesAsNodes();
+  else if (Node.isInterfaceDeclaration(node)) refs = node.findReferencesAsNodes();
+  else if (Node.isTypeAliasDeclaration(node)) refs = node.findReferencesAsNodes();
+  else if (Node.isEnumDeclaration(node)) refs = node.findReferencesAsNodes();
   else if (Node.isVariableStatement(node)) {
     const decls = node.getDeclarations();
-    if (decls.length > 0) nameNode = decls[0].getNameNode();
+    if (decls.length > 0) refs = decls[0].findReferencesAsNodes();
   }
-
-  if (!nameNode) return false;
-
-  const refs = nameNode.findReferencesAsNodes();
   for (const ref of refs) {
     if (ref.getSourceFile().getFilePath() !== declaringFilePath) {
       return true;
