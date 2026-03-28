@@ -35,6 +35,7 @@ export async function scanWithPool(
     return scanSequential(files, logger);
   }
 
+  /* v8 ignore start -- worker thread orchestration requires built JS files */
   const startMs = performance.now();
 
   // Split files into batches
@@ -81,6 +82,7 @@ export async function scanWithPool(
   });
 
   return { results: allResults, errors: allErrors };
+  /* v8 ignore stop */
 }
 
 /** Sequential fallback for small file counts or when workers aren't available */
@@ -103,6 +105,7 @@ export function scanSequential(
   return { results, errors };
 }
 
+/* v8 ignore start -- worker thread orchestration requires built JS files */
 function runWorker(
   workerPath: string,
   batches: { path: string; contentHash: string }[][],
@@ -156,3 +159,4 @@ function resolveWorkerPath(): string {
   const thisDir = path.dirname(thisFile);
   return path.join(thisDir, 'worker.js');
 }
+/* v8 ignore stop */
