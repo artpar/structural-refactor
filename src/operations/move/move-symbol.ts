@@ -32,6 +32,10 @@ export function moveSymbol(project: Project, args: MoveSymbolArgs): ChangeSet {
     return createChangeSet('Move (file not found)', []);
   }
 
+  // Use absolute paths from ts-morph for all path computations
+  const absFromFile = sourceSf.getFilePath();
+  const absToFile = targetSf.getFilePath();
+
   // Capture originals
   const originalContents = new Map<string, string>();
   for (const sf of project.getSourceFiles()) {
@@ -81,7 +85,7 @@ export function moveSymbol(project: Project, args: MoveSymbolArgs): ChangeSet {
   // Issue #5: If symbol was non-exported, add import in source so references still work
   if (!isExported) {
     addImport(sourceSf, {
-      moduleSpecifier: relativeSpecifier(fromFile, toFile),
+      moduleSpecifier: relativeSpecifier(absFromFile, absToFile),
       namedImports: [symbolName],
     });
   }
@@ -91,12 +95,12 @@ export function moveSymbol(project: Project, args: MoveSymbolArgs): ChangeSet {
 
   // Update imports in all files that imported this symbol from the source
   if (isExported) {
-    const oldSpecifierFromSource = (importerPath: string) => relativeSpecifier(importerPath, fromFile);
-    const newSpecifierToTarget = (importerPath: string) => relativeSpecifier(importerPath, toFile);
+    const oldSpecifierFromSource = (importerPath: string) => relativeSpecifier(importerPath, absFromFile);
+    const newSpecifierToTarget = (importerPath: string) => relativeSpecifier(importerPath, absToFile);
 
     for (const sf of project.getSourceFiles()) {
       const sfPath = sf.getFilePath();
-      if (sfPath === fromFile || sfPath === toFile) continue;
+      if (sfPath === absFromFile || sfPath === absToFile) continue;
 
       const importDecls = sf.getImportDeclarations();
       for (const importDecl of importDecls) {
@@ -140,7 +144,7 @@ export function moveSymbol(project: Project, args: MoveSymbolArgs): ChangeSet {
     durationMs,
   });
 
-  return createChangeSet(`Move '${symbolName}' from '${fromFile}' to '${toFile}'`, files);
+  return createChangeSet(`Move '${symbolName}' from '${absFromFile}' to '${absToFile}'`, files);
 }
 
 /** Find a declaration by name — checks exported first, then non-exported */

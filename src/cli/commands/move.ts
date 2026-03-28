@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import path from 'node:path';
 import { createExecutionContext, createProject, handleResult } from '../execute.js';
 import { moveSymbol } from '../../operations/move/move-symbol.js';
 import { renameFile } from '../../operations/rename/rename-file.js';
@@ -20,8 +21,8 @@ export function registerMove(program: Command): void {
 
       const cs = moveSymbol(project, {
         symbolName: name,
-        fromFile: opts.from,
-        toFile: opts.to,
+        fromFile: path.resolve(opts.from),
+        toFile: path.resolve(opts.to),
         logger: ctx.logger,
       });
 
