@@ -1,6 +1,6 @@
 {
   "name": "structural-refactor",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "CLI for IntelliJ-style structural refactoring of JavaScript/TypeScript codebases",
   "type": "module",
   "packageManager": "pnpm@10.11.0",
