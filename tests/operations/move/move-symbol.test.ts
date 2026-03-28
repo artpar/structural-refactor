@@ -259,6 +259,28 @@ describe('moveSymbol', () => {
     expect(importDecl).toBeDefined();
   });
 
+  // Issue #16: export keyword placed before leading comment
+  it('places export keyword before declaration, not before leading comment', () => {
+    const project = makeProject({
+      '/src/source.ts': '// Storage utilities\nconst isFloating = () => true;\nexport function main() { return isFloating(); }\n',
+      '/src/target.ts': '',
+    });
+    const { logger } = makeLogger();
+
+    const cs = moveSymbol(project, {
+      symbolName: 'isFloating',
+      fromFile: '/src/source.ts',
+      toFile: '/src/target.ts',
+      logger,
+    });
+
+    const targetChange = cs.files.find((f) => f.path === '/src/target.ts')!;
+    expect(targetChange).toBeDefined();
+    // export should be before 'const', not before the comment
+    expect(targetChange.modified).not.toMatch(/export\s*\/\//);
+    expect(targetChange.modified).toContain('export const isFloating');
+  });
+
   it('logs the move operation', () => {
     const project = makeProject({
       '/src/source.ts': 'export function fn() {}\n',

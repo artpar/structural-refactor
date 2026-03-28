@@ -198,12 +198,12 @@ function removeNode(node: Node): void {
   else if (Node.isVariableStatement(node)) node.remove();
 }
 
-/** Ensure a declaration text starts with 'export' */
+/** Ensure a declaration text has 'export' before the declaration keyword */
 function ensureExported(declText: string): string {
-  const trimmed = declText.trimStart();
-  if (trimmed.startsWith('export ')) return declText;
-  // Insert 'export ' before the declaration keyword
-  return declText.replace(trimmed, 'export ' + trimmed);
+  if (/\bexport\b/.test(declText)) return declText;
+  // Insert 'export ' before the declaration keyword, not before leading comments
+  const declKeywords = /^(const |let |var |function |class |interface |type |enum |abstract |async )/m;
+  return declText.replace(declKeywords, 'export $1');
 }
 
 /** Remove import specifiers that are no longer referenced in the source file */
