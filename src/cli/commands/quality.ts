@@ -3,6 +3,8 @@ import path from 'node:path';
 import fg from 'fast-glob';
 import { createExecutionContext, createProject, handleResult } from '../execute.js';
 import { deduplicate } from '../../operations/quality/deduplicate.js';
+import { findDeadCode } from '../../operations/quality/dead-code.js';
+import { findDuplicates } from '../../operations/quality/find-duplicates.js';
 
 export function registerQuality(program: Command): void {
   const quality = program
@@ -36,10 +38,30 @@ export function registerQuality(program: Command): void {
     });
 
   quality.command('find-duplicates').description('Find and refactor duplicate code')
-    .option('--scope <path>', 'Limit to directory').action(notImpl('find-duplicates'));
+    .option('--scope <path>', 'Limit to directory')
+    .action((opts, cmd) => {
+      const globalOpts = cmd.optsWithGlobals();
+      const ctx = createExecutionContext(globalOpts);
+      const project = createProject(ctx);
+      const cs = findDuplicates(project, {
+        scope: opts.scope ? path.resolve(opts.scope) : undefined,
+        logger: ctx.logger,
+      });
+      handleResult(ctx, cs);
+    });
 
   quality.command('dead-code').description('Find and remove unreferenced exports')
-    .option('--scope <path>', 'Limit to directory').action(notImpl('dead-code'));
+    .option('--scope <path>', 'Limit to directory')
+    .action((opts, cmd) => {
+      const globalOpts = cmd.optsWithGlobals();
+      const ctx = createExecutionContext(globalOpts);
+      const project = createProject(ctx);
+      const cs = findDeadCode(project, {
+        scope: opts.scope ? path.resolve(opts.scope) : undefined,
+        logger: ctx.logger,
+      });
+      handleResult(ctx, cs);
+    });
 
   quality.command('promises-to-async').description('Convert Promise chains to async/await')
     .option('--scope <path>', 'Limit to directory').action(notImpl('promises-to-async'));

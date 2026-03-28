@@ -40,50 +40,80 @@ export function moveSymbol(project: Project, args: MoveSymbolArgs): ChangeSet {
 
   const startMs = performance.now();
 
-  // Find the exported declaration by name in source file AST
-  const exportedDecl = findExportedDeclaration(sourceSf, symbolName);
-  if (!exportedDecl) {
+  // Find declaration by name — exported first, then non-exported
+  const decl = findDeclaration(sourceSf, symbolName);
+  if (!decl) {
     logger.warn('move-symbol', 'symbol not found in source', { symbolName, fromFile });
     return createChangeSet('Move (symbol not found)', []);
   }
 
-  // Get the full text of the declaration to move
-  const declText = exportedDecl.getFullText();
+  const isExported = isNodeExported(decl);
 
-  // Add the declaration to the target file
-  targetSf.addStatements(declText);
+  // Issue #1: Check if target already has a symbol with the same name
+  const existingInTarget = findDeclaration(targetSf, symbolName);
+  if (existingInTarget) {
+    // Check for signature mismatch and warn
+    const sourceSig = getSignature(decl);
+    const targetSig = getSignature(existingInTarget);
+    if (sourceSig && targetSig && !signaturesCompatible(sourceSig, targetSig)) {
+      logger.warn('move-symbol', 'target has symbol with different signature', {
+        symbolName,
+        sourceSignature: sourceSig.text,
+        targetSignature: targetSig.text,
+      });
+    }
+    logger.info('move-symbol', 'target already has symbol, skipping copy', { symbolName });
+  } else {
+    // Add the declaration to the target file
+    let declText = decl.getFullText();
 
-  // Remove from source — call remove on the concrete declaration type
-  if (Node.isFunctionDeclaration(exportedDecl)) exportedDecl.remove();
-  else if (Node.isClassDeclaration(exportedDecl)) exportedDecl.remove();
-  else if (Node.isInterfaceDeclaration(exportedDecl)) exportedDecl.remove();
-  else if (Node.isTypeAliasDeclaration(exportedDecl)) exportedDecl.remove();
-  else if (Node.isEnumDeclaration(exportedDecl)) exportedDecl.remove();
-  else if (Node.isVariableStatement(exportedDecl)) exportedDecl.remove();
+    // Issue #5: If source symbol is not exported, add export in target
+    if (!isExported) {
+      declText = ensureExported(declText);
+    }
+
+    targetSf.addStatements(declText);
+  }
+
+  // Remove from source
+  removeNode(decl);
+
+  // Issue #5: If symbol was non-exported, add import in source so references still work
+  if (!isExported) {
+    addImport(sourceSf, {
+      moduleSpecifier: relativeSpecifier(fromFile, toFile),
+      namedImports: [symbolName],
+    });
+  }
+
+  // Issue #4: Clean up unused imports in source after removing the declaration
+  removeUnusedImports(sourceSf);
 
   // Update imports in all files that imported this symbol from the source
-  const oldSpecifierFromSource = (importerPath: string) => relativeSpecifier(importerPath, fromFile);
-  const newSpecifierToTarget = (importerPath: string) => relativeSpecifier(importerPath, toFile);
+  if (isExported) {
+    const oldSpecifierFromSource = (importerPath: string) => relativeSpecifier(importerPath, fromFile);
+    const newSpecifierToTarget = (importerPath: string) => relativeSpecifier(importerPath, toFile);
 
-  for (const sf of project.getSourceFiles()) {
-    const sfPath = sf.getFilePath();
-    if (sfPath === fromFile || sfPath === toFile) continue;
+    for (const sf of project.getSourceFiles()) {
+      const sfPath = sf.getFilePath();
+      if (sfPath === fromFile || sfPath === toFile) continue;
 
-    const importDecls = sf.getImportDeclarations();
-    for (const decl of importDecls) {
-      if (decl.getModuleSpecifierValue() === oldSpecifierFromSource(sfPath)) {
-        const namedImport = decl.getNamedImports().find((n) => n.getName() === symbolName);
-        if (namedImport) {
-          // Remove this specifier from the old import
-          namedImport.remove();
+      const importDecls = sf.getImportDeclarations();
+      for (const importDecl of importDecls) {
+        if (importDecl.getModuleSpecifierValue() === oldSpecifierFromSource(sfPath)) {
+          const namedImport = importDecl.getNamedImports().find((n) => n.getName() === symbolName);
+          if (namedImport) {
+            // Remove this specifier from the old import
+            namedImport.remove();
 
-          // If no imports left, remove the declaration
-          if (decl.getNamedImports().length === 0 && !decl.getDefaultImport() && !decl.getNamespaceImport()) {
-            decl.remove();
+            // If no imports left, remove the declaration
+            if (importDecl.getNamedImports().length === 0 && !importDecl.getDefaultImport() && !importDecl.getNamespaceImport()) {
+              importDecl.remove();
+            }
+
+            // Add import from the new target
+            addImport(sf, { moduleSpecifier: newSpecifierToTarget(sfPath), namedImports: [symbolName] });
           }
-
-          // Add import from the new target
-          addImport(sf, { moduleSpecifier: newSpecifierToTarget(sfPath), namedImports: [symbolName] });
         }
       }
     }
@@ -113,21 +143,16 @@ export function moveSymbol(project: Project, args: MoveSymbolArgs): ChangeSet {
   return createChangeSet(`Move '${symbolName}' from '${fromFile}' to '${toFile}'`, files);
 }
 
-function findExportedDeclaration(sourceFile: ReturnType<Project['getSourceFileOrThrow']>, name: string): Node | undefined {
+/** Find a declaration by name — checks exported first, then non-exported */
+function findDeclaration(sourceFile: ReturnType<Project['getSourceFileOrThrow']>, name: string): Node | undefined {
   // Check function declarations
   const fn = sourceFile.getFunction(name);
-  if (fn?.isExported()) return fn;
+  if (fn) return fn;
 
-  // Check variable declarations — need to return the full variable statement
+  // Check variable declarations — return the full variable statement
   for (const stmt of sourceFile.getVariableStatements()) {
-    if (!stmt.isExported()) continue;
     for (const decl of stmt.getDeclarations()) {
       if (decl.getName() === name) {
-        // If statement has only this one declaration, return the whole statement
-        if (stmt.getDeclarations().length === 1) {
-          return stmt;
-        }
-        // Otherwise just the declaration (more complex case — punt for now)
         return stmt;
       }
     }
@@ -135,19 +160,109 @@ function findExportedDeclaration(sourceFile: ReturnType<Project['getSourceFileOr
 
   // Check class declarations
   const cls = sourceFile.getClass(name);
-  if (cls?.isExported()) return cls;
+  if (cls) return cls;
 
   // Check interface declarations
   const iface = sourceFile.getInterface(name);
-  if (iface?.isExported()) return iface;
+  if (iface) return iface;
 
   // Check type aliases
   const typeAlias = sourceFile.getTypeAlias(name);
-  if (typeAlias?.isExported()) return typeAlias;
+  if (typeAlias) return typeAlias;
 
   // Check enum declarations
   const enumDecl = sourceFile.getEnum(name);
-  if (enumDecl?.isExported()) return enumDecl;
+  if (enumDecl) return enumDecl;
 
   return undefined;
+}
+
+/** Check if a node is exported */
+function isNodeExported(node: Node): boolean {
+  if (Node.isFunctionDeclaration(node)) return node.isExported();
+  if (Node.isClassDeclaration(node)) return node.isExported();
+  if (Node.isInterfaceDeclaration(node)) return node.isExported();
+  if (Node.isTypeAliasDeclaration(node)) return node.isExported();
+  if (Node.isEnumDeclaration(node)) return node.isExported();
+  if (Node.isVariableStatement(node)) return node.isExported();
+  return false;
+}
+
+/** Remove a node from the AST */
+function removeNode(node: Node): void {
+  if (Node.isFunctionDeclaration(node)) node.remove();
+  else if (Node.isClassDeclaration(node)) node.remove();
+  else if (Node.isInterfaceDeclaration(node)) node.remove();
+  else if (Node.isTypeAliasDeclaration(node)) node.remove();
+  else if (Node.isEnumDeclaration(node)) node.remove();
+  else if (Node.isVariableStatement(node)) node.remove();
+}
+
+/** Ensure a declaration text starts with 'export' */
+function ensureExported(declText: string): string {
+  const trimmed = declText.trimStart();
+  if (trimmed.startsWith('export ')) return declText;
+  // Insert 'export ' before the declaration keyword
+  return declText.replace(trimmed, 'export ' + trimmed);
+}
+
+/** Remove import specifiers that are no longer referenced in the source file */
+function removeUnusedImports(sourceFile: ReturnType<Project['getSourceFileOrThrow']>): void {
+  // Collect all identifier names used in the file, excluding import specifiers
+  const usedNames = new Set<string>();
+  for (const id of sourceFile.getDescendantsOfKind(SyntaxKind.Identifier)) {
+    // Skip identifiers that are part of import specifiers
+    const parent = id.getParent();
+    if (parent && Node.isImportSpecifier(parent)) continue;
+    // Skip the module specifier string identifiers
+    if (parent && Node.isImportDeclaration(parent)) continue;
+    usedNames.add(id.getText());
+  }
+
+  // Now check each import declaration
+  for (const importDecl of sourceFile.getImportDeclarations()) {
+    const namedImports = importDecl.getNamedImports();
+    for (const specifier of [...namedImports]) {
+      if (!usedNames.has(specifier.getName())) {
+        specifier.remove();
+      }
+    }
+
+    // Remove entire declaration if empty
+    if (importDecl.getNamedImports().length === 0 && !importDecl.getDefaultImport() && !importDecl.getNamespaceImport()) {
+      importDecl.remove();
+    }
+  }
+}
+
+/** Extract a simple signature string for comparison */
+interface FunctionSig {
+  paramCount: number;
+  paramTypes: string[];
+  returnType: string;
+  text: string;
+}
+
+function getSignature(node: Node): FunctionSig | undefined {
+  if (Node.isFunctionDeclaration(node)) {
+    const params = node.getParameters();
+    const paramTypes = params.map((p) => p.getType().getText());
+    const returnType = node.getReturnType().getText();
+    return {
+      paramCount: params.length,
+      paramTypes,
+      returnType,
+      text: `(${paramTypes.join(', ')}) => ${returnType}`,
+    };
+  }
+  return undefined;
+}
+
+function signaturesCompatible(a: FunctionSig, b: FunctionSig): boolean {
+  if (a.paramCount !== b.paramCount) return false;
+  if (a.returnType !== b.returnType) return false;
+  for (let i = 0; i < a.paramTypes.length; i++) {
+    if (a.paramTypes[i] !== b.paramTypes[i]) return false;
+  }
+  return true;
 }

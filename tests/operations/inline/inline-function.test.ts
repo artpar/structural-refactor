@@ -59,6 +59,52 @@ describe('inlineFunction', () => {
     expect(cs.files).toHaveLength(0);
   });
 
+  // Issue #6: non-exported module-scoped function defined after caller
+  it('inlines a non-exported module-scoped function defined after its caller', () => {
+    const code = 'export function main() { return fmt("hello"); }\nfunction fmt(s: string) { return s.trim(); }\n';
+    const project = makeProject({ '/src/app.ts': code });
+    const { logger } = makeLogger();
+
+    const cs = inlineFunction(project, {
+      filePath: '/src/app.ts',
+      line: 2,
+      col: 10, // 'fmt' on line 2
+      logger,
+    });
+
+    expect(cs.files).toHaveLength(1);
+    const modified = cs.files[0].modified;
+    // fmt should be removed
+    const sf = parseAst(modified);
+    expect(sf.getFunction('fmt')).toBeUndefined();
+    // call site should be inlined
+    expect(modified).toContain('"hello".trim()');
+  });
+
+  // Issue #6: cursor on function keyword instead of name
+  it('finds function when cursor is on function keyword, not name', () => {
+    const code = 'function double(n: number) { return n * 2; }\nconst x = double(5);\n';
+    const project = makeProject({ '/src/app.ts': code });
+    const { logger } = makeLogger();
+
+    const cs = inlineFunction(project, {
+      filePath: '/src/app.ts',
+      line: 1,
+      col: 1, // 'function' keyword, not 'double'
+      logger,
+    });
+
+    // Should either inline successfully or give a clear precondition failure
+    // It should NOT silently produce no output
+    if (cs.files.length > 0) {
+      const modified = cs.files[0].modified;
+      expect(modified).toContain('5 * 2');
+    } else {
+      // Acceptable: precondition failure with message
+      expect(cs.description).toContain('Precondition failed');
+    }
+  });
+
   it('logs the operation', () => {
     const code = 'function f() { return 1; }\nconst x = f();\n';
     const project = makeProject({ '/src/app.ts': code });

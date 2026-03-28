@@ -25,14 +25,19 @@ export function inlineFunction(project: Project, args: InlineFunctionArgs): Chan
 
   const pos = sourceFile.compilerNode.getPositionOfLineAndCharacter(line - 1, col - 1);
   const node = sourceFile.getDescendantAtPos(pos);
-  if (!node || !Node.isIdentifier(node)) {
-    return executeRefactoring(project, 'Inline function', () => preconditionFail(['no identifier at position']), () => {}, logger);
+  if (!node) {
+    return executeRefactoring(project, 'Inline function', () => preconditionFail(['no node at position']), () => {}, logger);
   }
 
-  const fnName = node.getText();
-  const fnDecl = sourceFile.getFunction(fnName);
+  // Find the function declaration: either from the identifier name, or by walking ancestors
+  let fnDecl = findFunctionAtNode(sourceFile, node);
   if (!fnDecl) {
     return executeRefactoring(project, 'Inline function', () => preconditionFail(['not a function declaration']), () => {}, logger);
+  }
+
+  const fnName = fnDecl.getName();
+  if (!fnName) {
+    return executeRefactoring(project, 'Inline function', () => preconditionFail(['function has no name']), () => {}, logger);
   }
 
   const body = fnDecl.getBody();
@@ -115,6 +120,27 @@ export function inlineFunction(project: Project, args: InlineFunctionArgs): Chan
     },
     logger,
   );
+}
+
+/** Find a function declaration from a node at the cursor position */
+function findFunctionAtNode(
+  sourceFile: ReturnType<Project['getSourceFileOrThrow']>,
+  node: Node,
+): ReturnType<ReturnType<Project['getSourceFileOrThrow']>['getFunction']> {
+  // If cursor is on the function name identifier, look it up directly
+  if (Node.isIdentifier(node)) {
+    const fn = sourceFile.getFunction(node.getText());
+    if (fn) return fn;
+  }
+
+  // Walk up ancestors to find the enclosing FunctionDeclaration
+  const ancestor = node.getFirstAncestorByKind(SyntaxKind.FunctionDeclaration);
+  if (ancestor) {
+    // Verify it's a direct child of the source file (top-level function)
+    if (ancestor.getParent() === sourceFile) return ancestor;
+  }
+
+  return undefined;
 }
 
 function substituteParam(expression: string, paramName: string, argValue: string): string {
