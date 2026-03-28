@@ -17,7 +17,7 @@ Most code transformation tools work on text. `sref` works on **structure**. When
 ## Installation
 
 ```bash
-# Requires Node >= 22
+# Requires Node >= 18
 npm install -g structural-refactor
 
 # Or use directly with npx
