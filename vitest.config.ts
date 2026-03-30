@@ -16,6 +16,7 @@ export default defineConfig({
         'src/patterns/types.ts',       // pure types, no runtime code
         'src/scanner/worker.ts',       // worker thread entry — runs in worker_threads context, untestable without build
         'src/cli/index.ts',            // CLI wiring, no logic
+        'src/cli/progress.ts',         // TTY spinner — requires interactive terminal
       ],
       reporter: ['text'],
       thresholds: {
