@@ -1,8 +1,20 @@
 import { Command } from 'commander';
-import { createRequire } from 'node:module';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
-const require = createRequire(import.meta.url);
-const pkg = require('../../package.json') as { version: string };
+function readVersion(): string {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  while (dir !== path.dirname(dir)) {
+    const candidate = path.join(dir, 'package.json');
+    if (fs.existsSync(candidate)) {
+      const pkg = JSON.parse(fs.readFileSync(candidate, 'utf-8'));
+      if (pkg.name === 'structural-refactor') return pkg.version;
+    }
+    dir = path.dirname(dir);
+  }
+  return '0.0.0';
+}
 import { registerRename } from './commands/rename.js';
 import { registerExtract } from './commands/extract.js';
 import { registerInline } from './commands/inline.js';
@@ -26,7 +38,7 @@ export function createProgram(): Command {
   program
     .name('sref')
     .description('Structural refactoring CLI for JavaScript/TypeScript')
-    .version(pkg.version)
+    .version(readVersion())
     .option('--dry-run', 'Preview changes without applying', false)
     .option('--json', 'Output as JSON', false)
     .option('--verbose', 'Show detailed operation log', false)
