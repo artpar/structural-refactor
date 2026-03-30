@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 import path from 'node:path';
-import { createExecutionContext, createProject, handleResult } from '../execute.js';
+import { createExecutionContext, createProject, handleResult, validateFilePaths } from '../execute.js';
+import { errorText } from '../color.js';
 import { moveSymbol } from '../../operations/move/move-symbol.js';
 import { renameFile } from '../../operations/rename/rename-file.js';
 
@@ -17,6 +18,14 @@ export function registerMove(program: Command): void {
     .action((name, opts, cmd) => {
       const globalOpts = cmd.optsWithGlobals();
       const ctx = createExecutionContext(globalOpts);
+
+      const fileErr = validateFilePaths([opts.from]);
+      if (fileErr) {
+        process.stderr.write(errorText(`Error: ${fileErr}`) + '\n');
+        process.exitCode = 1;
+        return;
+      }
+
       const project = createProject(ctx);
 
       const cs = moveSymbol(project, {
@@ -36,6 +45,14 @@ export function registerMove(program: Command): void {
     .action((filePath, opts, cmd) => {
       const globalOpts = cmd.optsWithGlobals();
       const ctx = createExecutionContext(globalOpts);
+
+      const fileErr = validateFilePaths([filePath]);
+      if (fileErr) {
+        process.stderr.write(errorText(`Error: ${fileErr}`) + '\n');
+        process.exitCode = 1;
+        return;
+      }
+
       const project = createProject(ctx);
 
       const cs = renameFile(project, {
@@ -53,8 +70,7 @@ export function registerMove(program: Command): void {
     .requiredOption('--from <className>', 'Source class')
     .requiredOption('--to <className>', 'Target class')
     .action((_name, _opts, _cmd) => {
-      // TODO: implement in Phase 5
-      console.error('move member: not yet implemented');
+      process.stderr.write(errorText('Error: move member is not yet implemented') + '\n');
       process.exitCode = 1;
     });
 }

@@ -1,4 +1,8 @@
 import { Command } from 'commander';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const pkg = require('../../package.json') as { version: string };
 import { registerRename } from './commands/rename.js';
 import { registerExtract } from './commands/extract.js';
 import { registerInline } from './commands/inline.js';
@@ -14,6 +18,7 @@ import { registerDiscover } from './commands/discover.js';
 import { registerPatterns } from './commands/patterns.js';
 import { registerUndo } from './commands/undo.js';
 import { registerModify } from './commands/modify.js';
+import { registerInit } from './commands/init.js';
 
 export function createProgram(): Command {
   const program = new Command();
@@ -21,13 +26,20 @@ export function createProgram(): Command {
   program
     .name('sref')
     .description('Structural refactoring CLI for JavaScript/TypeScript')
-    .version('0.1.0')
+    .version(pkg.version)
     .option('--dry-run', 'Preview changes without applying', false)
     .option('--json', 'Output as JSON', false)
     .option('--verbose', 'Show detailed operation log', false)
     .option('--tsconfig <path>', 'Path to tsconfig.json')
     .option('--scope <path>', 'Limit to directory subset')
-    .option('--no-confirm', 'Skip confirmation prompts');
+    .option('--no-confirm', 'Skip confirmation prompts')
+    .option('--no-color', 'Disable colored output')
+    .hook('preAction', (_thisCommand, actionCommand) => {
+      const opts = actionCommand.optsWithGlobals();
+      if (opts['color'] === false) {
+        process.env['NO_COLOR'] = '1';
+      }
+    });
 
   registerRename(program);
   registerExtract(program);
@@ -44,6 +56,17 @@ export function createProgram(): Command {
   registerPatterns(program);
   registerUndo(program);
   registerModify(program);
+  registerInit(program);
+
+  program.addHelpText('after', `
+Examples:
+  $ sref init                                    Set up sref in your project
+  $ sref discover list                           List all symbols
+  $ sref discover find createUser                Find a specific symbol
+  $ sref rename symbol Foo --to Bar --dry-run    Preview a rename
+  $ sref analyze deps                            View dependency tree
+  $ sref undo                                    Undo last operation
+`);
 
   return program;
 }

@@ -10,7 +10,6 @@ describe('SrefConfig', () => {
     it('provides sensible defaults', () => {
       const cfg = defaultConfig();
       expect(cfg.tsconfig).toBe('tsconfig.json');
-      expect(cfg.plugins).toEqual([]);
       expect(cfg.exclude).toEqual([]);
     });
   });
@@ -22,19 +21,17 @@ describe('SrefConfig', () => {
     });
 
     it('preserves unset defaults', () => {
-      const cfg = mergeConfig(defaultConfig(), { plugins: ['react'] });
+      const cfg = mergeConfig(defaultConfig(), { exclude: ['vendor/**'] });
       expect(cfg.tsconfig).toBe('tsconfig.json');
-      expect(cfg.plugins).toEqual(['react']);
+      expect(cfg.exclude).toEqual(['vendor/**']);
     });
 
     it('merges multiple overrides', () => {
       const cfg = mergeConfig(defaultConfig(), {
         tsconfig: 'custom.json',
-        plugins: ['react'],
         exclude: ['dist/**'],
       });
       expect(cfg.tsconfig).toBe('custom.json');
-      expect(cfg.plugins).toEqual(['react']);
       expect(cfg.exclude).toEqual(['dist/**']);
     });
   });

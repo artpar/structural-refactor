@@ -25,7 +25,8 @@ describe('CLI program', () => {
     expect(commands).toContain('patterns');
     expect(commands).toContain('undo');
     expect(commands).toContain('modify');
-    expect(commands).toHaveLength(15);
+    expect(commands).toContain('init');
+    expect(commands).toHaveLength(16);
   });
 
   it('has global options', () => {
@@ -37,6 +38,7 @@ describe('CLI program', () => {
     expect(optionNames).toContain('--tsconfig');
     expect(optionNames).toContain('--scope');
     expect(optionNames).toContain('--no-confirm');
+    expect(optionNames).toContain('--no-color');
   });
 
   describe('rename subcommands', () => {

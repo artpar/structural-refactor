@@ -1,13 +1,11 @@
 export interface SrefConfig {
   tsconfig: string;
-  plugins: string[];
   exclude: string[];
 }
 
 export function defaultConfig(): SrefConfig {
   return {
     tsconfig: 'tsconfig.json',
-    plugins: [],
     exclude: [],
   };
 }
